@@ -1,0 +1,37 @@
+{
+  "name": "trustvault",
+  "version": "1.0.0",
+  "description": "Security-first document platform with server-side authorization enforcement and tamper-evident audit trails",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [
+    "security",
+    "authorization",
+    "document-vault",
+    "audit-trail",
+    "supabase"
+  ],
+  "author": "TrustVault Security Engineering Team",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "overrides": {
+    "chokidar": "^4.0.3",
+    "braces": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

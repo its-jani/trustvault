@@ -1,0 +1,145 @@
+import express from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import supabase from './config/supabase.js';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// 1. Security Headers Middleware
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: []
+      }
+    },
+    crossOriginEmbedderPolicy: true,
+    crossOriginOpenerPolicy: true,
+    crossOriginResourcePolicy: { policy: 'same-site' },
+    dnsPrefetchControl: { allow: false },
+    frameguard: { action: 'deny' },
+    hidePoweredBy: true,
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    ieNoOpen: true,
+    noSniff: true,
+    originAgentCluster: true,
+    permittedCrossDomainPolicies: { permittedPolicies: 'none' },
+    referrerPolicy: { policy: 'no-referrer' },
+    xssFilter: true
+  })
+);
+
+// 2. CORS Configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:3000', 'http://localhost:5173'];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server)
+      if (!origin || allowedOrigins.includes(origin) || NODE_ENV === 'development') {
+        return callback(null, true);
+      }
+      return callback(new Error('CORS request blocked by TrustVault security policy.'));
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+  })
+);
+
+// 3. Body Parsing Middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// 4. Root Welcome Route
+app.get('/', (req, res) => {
+  res.status(200).json({
+    service: 'TrustVault Security-First Document Platform API',
+    status: 'OPERATIONAL',
+    version: '1.0.0',
+    documentation: '/api/health'
+  });
+});
+
+// 5. Database Health Check Route
+app.get('/api/health', async (req, res, next) => {
+  try {
+    let dbStatus = 'disconnected';
+    let dbError = null;
+
+    if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        // Query users table directly without head/count metadata wrappers
+        const { data, error } = await supabase.from('users').select('id').limit(1);
+
+        if (error) {
+          console.error('[SUPABASE HEALTHCHECK ERROR]:', error);
+          dbStatus = 'degraded';
+          dbError = error.message || error;
+        } else {
+          dbStatus = 'connected';
+        }
+      } catch (err) {
+        console.error('[SUPABASE FETCH EXCEPTION]:', err);
+        dbStatus = 'unreachable';
+        dbError = err.message;
+      }
+    } else {
+      dbStatus = 'unconfigured';
+    }
+
+    const isHealthy = dbStatus === 'connected';
+
+    res.status(isHealthy ? 200 : 503).json({
+      status: isHealthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      environment: NODE_ENV,
+      database: {
+        status: dbStatus,
+        ...(NODE_ENV === 'development' && dbError ? { details: dbError } : {})
+      },
+      uptimeSeconds: Math.floor(process.uptime())
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 6. 404 Handler for Unmatched Endpoints
+app.use(notFoundHandler);
+
+// 7. Centralized Error Handler
+app.use(errorHandler);
+
+// Server Execution
+if (process.env.NODE_ENV !== 'test') {
+  const server = app.listen(PORT, () => {
+    console.log(`[TrustVault] Server running in ${NODE_ENV} mode on port ${PORT}`);
+    console.log(`[TrustVault] Healthcheck available at http://localhost:${PORT}/api/health`);
+  });
+
+  // Graceful shutdown handling
+  const shutdown = (signal) => {
+    console.log(`[TrustVault] Received ${signal}. Commencing graceful shutdown...`);
+    server.close(() => {
+      console.log('[TrustVault] HTTP server terminated cleanly.');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+export default app;

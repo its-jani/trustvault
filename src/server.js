@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import supabase from './config/supabase.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import authRoutes from './routes/authRoutes.js';
 
 dotenv.config();
 
@@ -116,10 +117,13 @@ app.get('/api/health', async (req, res, next) => {
   }
 });
 
-// 6. 404 Handler for Unmatched Endpoints
+// 6. Application Routes
+app.use('/api/auth', authRoutes);
+
+// 7. 404 Handler for Unmatched Endpoints
 app.use(notFoundHandler);
 
-// 7. Centralized Error Handler
+// 8. Centralized Error Handler
 app.use(errorHandler);
 
 // Server Execution

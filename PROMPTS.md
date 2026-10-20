@@ -192,4 +192,30 @@ Implement Policy Enforcement Point (PEP) middleware layers that intercept incomi
    * *Flaw:* AI frequently evaluates role checks via loose string equality or fails to assert the presence of `req.user`, causing unexpected `TypeError: Cannot read properties of undefined (reading 'role')` when unauthenticated users hit role-gated routes.
    * *Remediation:* `requireRole()` normalizes single and multiple role parameters into strict arrays, safely evaluates `req.user`, and defaults unauthenticated actors to `'ANONYMOUS'` in forensic audit logs.
 
+---
+
+## Entry 4: Auth Controllers, API Route Enforcement & Identity Inspection
+* **Date:** 2026-10-20
+* **Developer/Engineer:** Lead Security Software Engineer
+* **Phase:** Day 2 — Phase 2.3: Auth Controllers, API Routes & Integration Tests
+* **Component:** `src/controllers/authController.js`, `src/routes/authRoutes.js`, `src/server.js`
+
+### 1. Context & User Prompt
+Implement public and protected authentication controllers (`register`, `login`, `getMe`), map HTTP endpoints `/api/auth/register`, `/api/auth/login`, and `/api/auth/me`, and integrate into Express server with full audit trail logging.
+
+### 2. Common AI Security Flaws Caught & Mitigated
+1. **Password Hash Leakage in API Responses:**
+   * *Flaw:* Standard AI controllers often return the newly created user database row directly (`res.status(201).json(data)`), leaking the bcrypt `password_hash` over the wire.
+   * *Remediation:* Explicit column projections on insert (`.select('id, email, full_name, role, created_at')`) and payload sanitization guaranteeing `password_hash` is never serialized in the response.
+2. **User Account Enumeration via Differential Responses:**
+   * *Flaw:* AI routinely implements disparate error responses such as `"Email does not exist"` versus `"Incorrect password"`, allowing attackers to map valid target accounts during credential stuffing.
+   * *Remediation:* Both non-existent emails and incorrect passwords return a strictly identical generic error: `"Invalid email or password."` at HTTP status 401, while maintaining distinct internal audit actions (`LOGIN_FAILED_UNKNOWN_USER` vs. `LOGIN_FAILED_INVALID_PASSWORD`) for security monitoring.
+3. **Privilege Escalation via Unchecked Role Injection:**
+   * *Flaw:* AI models often accept unvalidated role strings from `req.body` directly into the database query, allowing arbitrary creation of `ADMIN` accounts.
+   * *Remediation:* Enforced validation against `VALID_ROLES` whitelist (`ADMIN`, `OWNER`, `VIEWER`) and safe defaulting to `VIEWER`.
+4. **Unhandled Database Constraint Crashes:**
+   * *Flaw:* AI commonly overlooks `full_name NOT NULL` constraints or crashes on unique email violation errors.
+   * *Remediation:* Added explicit email pre-flight check returning clean `409 Conflict` and dynamic fallback handling for `full_name`.
+
+
 

@@ -13,6 +13,10 @@ This register employs the **STRIDE** methodology (Spoofing, Tampering, Repudiati
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **TV-01** | Audit Trail Alteration & Tampering | Tampering, Repudiation | API8: Security Misconfiguration | **CRITICAL** | **Mitigated (DB Trigger & Hash Chain)** |
 | **TV-02** | Path Traversal & Static Storage Exposure | Tampering, Info Disclosure, EoP | API1: Broken Object Level Auth (BOLA) / API3: Broken Object Property | **CRITICAL** | **Mitigated (Virtual UUID Storage & Stream Proxy)** |
+| **TV-03** | Weak Signing Key & JWT Forgery | Spoofing, Elevation of Privilege | API2: Broken Authentication | **HIGH** | **Mitigated (Min 32-char Secret & Fail-Fast)** |
+| **TV-04** | Credential Stuffing & Brute-Forcing | Spoofing | API2: Broken Authentication | **HIGH** | **Mitigated (Bcrypt Salt 12 & Rate Limit Plan)** |
+| **TV-05** | Account Enumeration Oracle | Information Disclosure | API2: Broken Authentication | **MEDIUM** | **Mitigated (Uniform Error Responses)** |
+| **TV-06** | Privilege Escalation at Registration | Elevation of Privilege | API5: Broken Function Level Auth | **HIGH** | **Mitigated (Whitelist & Default VIEWER)** |
 
 ---
 
@@ -96,3 +100,46 @@ An attacker attempts to upload files with malicious filenames containing directo
 * **Automated BOLA Test:** Verify that User B cannot download User A's document via direct ID reference without an active grant.
 * **Path Traversal Test:** Attempt upload with `../../config/credentials.json`; assert sanitization strips traversal sequences and stores the file safely under UUID keys.
 * **Immediate Revocation Test:** Grant READ permission to User B, verify download succeeds, revoke grant, immediately verify download returns `403 Forbidden`.
+
+---
+
+## 4. Day 2 Threat Model: Identity & Access Management
+
+### TV-03: Weak Cryptographic Secrets & JWT Forgery
+* **STRIDE Category:** Spoofing, Elevation of Privilege.
+* **OWASP API Classification:** API2: Broken Authentication.
+* **Attack Vector:** An attacker discovers or brute-forces an easily guessable default JWT signing secret (e.g. `'secret'` or `'changeit'`), signs forged tokens with arbitrary `role: 'ADMIN'` and user UUIDs, completely bypassing authentication checks.
+* **Defense-in-Depth Mitigation:**
+  1. `src/config/env.js` strictly blocks non-test startup if `JWT_SECRET` is unset.
+  2. Issues security console warnings if secret length is under 32 characters.
+  3. Tokens strictly verified using `jsonwebtoken` with HMAC-SHA256 signature verification.
+* **Verification Strategy:** Automated unit tests attempt verifying tokens signed with malicious/different secrets, asserting `AuthTokenError` with code `TOKEN_INVALID`.
+
+### TV-04: Credential Stuffing & Password Brute-Forcing
+* **STRIDE Category:** Spoofing.
+* **OWASP API Classification:** API2: Broken Authentication.
+* **Attack Vector:** Threat actors utilize leaked credential dumps or automated dictionary scripts to guess passwords for high-privilege `ADMIN` or `OWNER` accounts.
+* **Defense-in-Depth Mitigation:**
+  1. Passwords hashed using `bcrypt` with minimum cost factor of 12 (`BCRYPT_SALT_ROUNDS=12`), enforcing high computational cost per hash evaluation.
+  2. Minimum password length policy of 8+ characters enforced at trust boundary in controller and utility layer.
+  3. Failed authentication attempts synchronously recorded to `audit_logs` (`LOGIN_FAILED_UNKNOWN_USER` and `LOGIN_FAILED_INVALID_PASSWORD`) with originating IP addresses for automated SIEM/alerting ingestion.
+* **Verification Strategy:** Unit test asserts short passwords rejected; timing checks assert constant-time evaluation.
+
+### TV-05: Account Enumeration Oracle via Error Analysis
+* **STRIDE Category:** Information Disclosure.
+* **OWASP API Classification:** API2: Broken Authentication.
+* **Attack Vector:** Attackers submit login requests and analyze error messages (e.g. distinguishing between "User not found" and "Incorrect password") to build a list of registered employees.
+* **Defense-in-Depth Mitigation:**
+  1. Identical generic response string: `401 Unauthorized: { error: 'Invalid email or password.' }` returned for both unknown users and invalid passwords.
+  2. Constant-time bcrypt comparison prevents response timing differentials from leaking whether a hash was computed.
+* **Verification Strategy:** Route integration tests assert identical error messages across both failure modes.
+
+### TV-06: Privilege Escalation via Unchecked Role Injection
+* **STRIDE Category:** Elevation of Privilege.
+* **OWASP API Classification:** API5: Broken Function Level Authorization.
+* **Attack Vector:** A regular viewer submits `{ "role": "ADMIN" }` or arbitrary role strings during open registration, self-assigning full administrative access.
+* **Defense-in-Depth Mitigation:**
+  1. Input validation strictly whitelists roles against `['ADMIN', 'OWNER', 'VIEWER']`.
+  2. Unspecified roles default safely to `'VIEWER'`.
+  3. Registration events explicitly log `USER_REGISTERED` with the assigned role in `audit_logs`.
+* **Verification Strategy:** Automated test verifies unauthorized roles return `400 Bad Request` and default registrations receive `VIEWER`.

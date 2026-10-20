@@ -47,12 +47,27 @@ trustvault/
 ├── README.md                  # Project overview and runbook
 ├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes
 ├── THREATS.md                 # STRIDE threat model & attack vector register
+├── tests/
+│   ├── authUtils.test.js      # Password & JWT cryptographic unit tests
+│   ├── middleware.test.js     # PEP authentication & RBAC middleware tests
+│   └── authRoutes.test.js     # Auth API routes integration tests
 └── src/
     ├── config/
+    │   ├── env.js             # Validated environment configurations
     │   ├── schema.sql         # Supabase PostgreSQL schema DDL with immutability trigger
     │   └── supabase.js        # Headless Supabase client with Service Role authorization
+    ├── controllers/
+    │   └── authController.js  # Registration, login, and identity controllers
     ├── middleware/
-    │   └── errorHandler.js    # Centralized Express error handler (no stack leaks in prod)
+    │   ├── auth.js            # PEP Bearer JWT authentication & audit logger
+    │   ├── errorHandler.js    # Centralized Express error handler (no stack leaks in prod)
+    │   └── rbac.js            # Policy Enforcement Point RBAC authorization
+    ├── routes/
+    │   └── authRoutes.js      # Public/protected auth route definitions
+    ├── utils/
+    │   ├── auditLogger.js     # Synchronous audit log persistence helper
+    │   ├── jwt.js             # Structured JWT issue & verify utilities
+    │   └── password.js        # Constant-time bcrypt hashing utilities
     └── server.js              # Express app bootstrap, helmet, cors, and healthcheck route
 ```
 
@@ -131,7 +146,77 @@ curl http://localhost:5000/api/health
 
 ---
 
-## 6. Security Documentation
+## 6. Authentication API Endpoints
 
-* [`PROMPTS.md`](./PROMPTS.md): Documents the AI interactions, security flaws in generated SQL, and human-in-the-loop remediation.
-* [`THREATS.md`](./THREATS.md): Comprehensive STRIDE analysis of Threat Vector 1 (Audit Trail Alteration) and Threat Vector 2 (Path Traversal & Storage Exposure).
+### 1. Register User
+* **Endpoint:** `POST /api/auth/register`
+* **Access:** Public
+* **Request Body:**
+  ```json
+  {
+    "email": "engineer@trustvault.local",
+    "password": "Password123!Secure",
+    "full_name": "Lead Security Engineer",
+    "role": "OWNER"
+  }
+  ```
+  *(Roles permitted: `ADMIN`, `OWNER`, `VIEWER`. Defaults to `VIEWER`.)*
+* **Response (`201 Created`):**
+  ```json
+  {
+    "message": "User registered successfully.",
+    "user": {
+      "id": "e6a2bc34-45a7-4c12-98ab-8c9012345678",
+      "email": "engineer@trustvault.local",
+      "full_name": "Lead Security Engineer",
+      "role": "OWNER",
+      "created_at": "2026-10-20T12:00:00.000Z"
+    }
+  }
+  ```
+
+### 2. User Login
+* **Endpoint:** `POST /api/auth/login`
+* **Access:** Public
+* **Request Body:**
+  ```json
+  {
+    "email": "engineer@trustvault.local",
+    "password": "Password123!Secure"
+  }
+  ```
+* **Response (`200 OK`):**
+  ```json
+  {
+    "message": "Login successful.",
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "e6a2bc34-45a7-4c12-98ab-8c9012345678",
+      "email": "engineer@trustvault.local",
+      "full_name": "Lead Security Engineer",
+      "role": "OWNER"
+    }
+  }
+  ```
+
+### 3. Identity Verification (`Me`)
+* **Endpoint:** `GET /api/auth/me`
+* **Access:** Protected (Bearer JWT in `Authorization` header)
+* **Headers:** `Authorization: Bearer <token>`
+* **Response (`200 OK`):**
+  ```json
+  {
+    "user": {
+      "id": "e6a2bc34-45a7-4c12-98ab-8c9012345678",
+      "email": "engineer@trustvault.local",
+      "role": "OWNER"
+    }
+  }
+  ```
+
+---
+
+## 7. Security Documentation
+
+* [`PROMPTS.md`](./PROMPTS.md): Complete audit log of AI interactions across Day 1 & Day 2, documenting security flaws in AI code and corrective human engineering.
+* [`THREATS.md`](./THREATS.md): Full STRIDE and OWASP API 2023 threat modeling register covering Audit Immutability, Path Traversal, JWT Forgery, Credential Stuffing, Account Enumeration, and Privilege Escalation.

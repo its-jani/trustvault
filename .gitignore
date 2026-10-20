@@ -5,6 +5,8 @@
 
 # Node dependencies
 node_modules/
+dist/
+graphify-out/
 
 # Logs
 logs/

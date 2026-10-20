@@ -6,7 +6,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "test": "node tests/authUtils.test.js"
   },
   "keywords": [
     "security",
@@ -19,10 +20,12 @@
   "license": "UNLICENSED",
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "helmet": "^8.0.0"
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

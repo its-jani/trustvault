@@ -147,3 +147,26 @@ EXECUTE FUNCTION prevent_audit_log_alteration();
 ### 5. Architectural Verification & Conclusion
 * **Result:** Running `UPDATE audit_logs ...` or `DELETE FROM audit_logs ...` immediately fails with SQLSTATE `55000` and error message `TRUSTVAULT_SECURITY_VIOLATION`.
 * **Takeaway:** AI provides a functional baseline for standard database schemas, but lacks adversarial security instincts. Without manual human intervention to enforce database-level triggers, audit trails remain vulnerable to tampering.
+
+---
+
+## Entry 2: Cryptographic Utilities & JWT Role Token Architecture
+* **Date:** 2026-10-20
+* **Developer/Engineer:** Lead Security Software Engineer
+* **Phase:** Day 2 — Phase 2.1: Cryptographic Utilities & JWT Token Manager
+* **Component:** `src/utils/password.js`, `src/utils/jwt.js`, `src/config/env.js`
+
+### 1. Context & User Prompt
+Implement cryptographic hashing (`bcryptjs`) and JWT token issuing/verifying utilities supporting `ADMIN`, `OWNER`, and `VIEWER` roles with strict environment checks.
+
+### 2. Common AI Security Flaws Caught & Mitigated
+1. **Unvalidated Claims in JWT Payload:**
+   * *Flaw:* AI often accepts any arbitrary object as payload, allowing caller injection or forged roles (e.g. `{ role: 'SUPERADMIN' }`).
+   * *Remediation:* Enforced strict claim verification in `generateToken`: `id`, `email`, and explicit validation against `VALID_ROLES` (`ADMIN`, `OWNER`, `VIEWER`).
+2. **Ambiguous Error Obfuscation:**
+   * *Flaw:* Generic `try/catch` blocks in AI-generated JWT modules often mask expiration as general invalidity or leak raw stack traces to callers.
+   * *Remediation:* Created structured `AuthTokenError` with discrete error codes (`TOKEN_EXPIRED`, `TOKEN_INVALID`, `TOKEN_MISSING`) and HTTP status 401.
+3. **Environment Misconfiguration Vulnerabilities:**
+   * *Flaw:* Using default fallback secrets in production environments.
+   * *Remediation:* `src/config/env.js` enforces a fatal throw if `JWT_SECRET` is unset in non-test runtime environments and issues security warnings if secret length is under 32 characters.
+

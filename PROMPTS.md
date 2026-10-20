@@ -170,3 +170,26 @@ Implement cryptographic hashing (`bcryptjs`) and JWT token issuing/verifying uti
    * *Flaw:* Using default fallback secrets in production environments.
    * *Remediation:* `src/config/env.js` enforces a fatal throw if `JWT_SECRET` is unset in non-test runtime environments and issues security warnings if secret length is under 32 characters.
 
+---
+
+## Entry 3: Policy Enforcement Point (PEP) & RBAC Authorization Middleware
+* **Date:** 2026-10-20
+* **Developer/Engineer:** Lead Security Software Engineer
+* **Phase:** Day 2 — Phase 2.2: PEP Authentication & RBAC Middleware with Audit Logging
+* **Component:** `src/utils/auditLogger.js`, `src/middleware/auth.js`, `src/middleware/rbac.js`
+
+### 1. Context & User Prompt
+Implement Policy Enforcement Point (PEP) middleware layers that intercept incoming HTTP requests, verify JWT signatures, enforce Role-Based Access Control (RBAC) across `ADMIN`, `OWNER`, and `VIEWER`, and synchronously record both unauthorized and forbidden access attempts into `audit_logs`.
+
+### 2. Common AI Security Flaws Caught & Mitigated
+1. **Unlogged Access Denials & Blind Rejections:**
+   * *Flaw:* Standard AI-generated middleware emits immediate `401` or `403` responses without forensic records. This leaves security administrators blind to brute-force token enumeration, token replay, or privilege escalation probes.
+   * *Remediation:* Every denial path (`UNAUTHORIZED_ACCESS_ATTEMPT`, `INVALID_TOKEN_ATTEMPT`, `FORBIDDEN_ROLE_ATTEMPT`) synchronously invokes `logAuditEvent()` before returning the response, capturing actor, IP, timestamp, and attempted roles.
+2. **Audit Failure Cascading to Pipeline Crash:**
+   * *Flaw:* AI often awaits database writes without error boundary containment. If the audit database experiences transient downtime or foreign key mismatches on untrusted actor UUIDs, an unhandled rejection crashes the API request pipeline.
+   * *Remediation:* `logAuditEvent()` wraps all persistence operations in safe boundaries, sanitizes UUIDs, and logs failures to `console.error` without halting the core request/response lifecycle.
+3. **Insecure Role Normalization & Type Confusion:**
+   * *Flaw:* AI frequently evaluates role checks via loose string equality or fails to assert the presence of `req.user`, causing unexpected `TypeError: Cannot read properties of undefined (reading 'role')` when unauthenticated users hit role-gated routes.
+   * *Remediation:* `requireRole()` normalizes single and multiple role parameters into strict arrays, safely evaluates `req.user`, and defaults unauthenticated actors to `'ANONYMOUS'` in forensic audit logs.
+
+

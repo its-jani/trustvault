@@ -217,5 +217,31 @@ Implement public and protected authentication controllers (`register`, `login`, 
    * *Flaw:* AI commonly overlooks `full_name NOT NULL` constraints or crashes on unique email violation errors.
    * *Remediation:* Added explicit email pre-flight check returning clean `409 Conflict` and dynamic fallback handling for `full_name`.
 
+---
+
+## Entry 5: AES-256-GCM Envelope Encryption & Decryption Utilities
+* **Date:** 2026-10-21
+* **Developer/Engineer:** Lead Security Software Engineer
+* **Phase:** Day 3 — Phase 3.1: Document Encryption & Decryption Utilities
+* **Component:** `src/utils/crypto.js`, `src/config/env.js`, `tests/cryptoUtils.test.js`
+
+### 1. Context & User Prompt
+Implement in-memory cryptographic utilities for encrypting and decrypting document buffers using AES-256-GCM before object storage upload, with fresh 12-byte IV generation, 16-byte authentication tags, and strict key validation.
+
+### 2. Common AI Security Flaws Caught & Mitigated
+1. **Catastrophic IV Reuse in Galois/Counter Mode (GCM):**
+   * *Flaw:* AI models frequently generate static IVs, use predictable timestamps, or derive IVs deterministically from entity IDs. In AES-GCM, reusing an IV under the same key leads to catastrophic loss of confidentiality and enables complete forgery of authentication tags.
+   * *Remediation:* Generated isolated, cryptographically secure 12-byte (96-bit) random IVs via `crypto.randomBytes(12)` on each invocation of `encryptBuffer`. Validated uniqueness across repeated runs via automated tests.
+2. **Missing or Incomplete AEAD Authentication Tag Verification:**
+   * *Flaw:* AI often omits `decipher.setAuthTag()` or swallows decipher exceptions, essentially degrading GCM to unauthenticated stream cipher execution and exposing documents to padding/bit-flipping tampering.
+   * *Remediation:* Strictly verified the 16-byte authentication tag during decryption. Any tampering with ciphertext, auth tag, or IV triggers an immediate `CryptoError` (`DECRYPTION_FAILED`).
+3. **Key Material Entropy Reduction & Encoding Mismatches:**
+   * *Flaw:* AI frequently accepts arbitrary string passwords and passes them into `createCipheriv`, relying on silent OpenSSL truncation or padding which degrades 256-bit entropy.
+   * *Remediation:* Enforced exact 64-character hexadecimal format (32 bytes raw entropy) with startup fail-fast validation in `src/config/env.js`.
+4. **Buffer Boundary & Type Errors:**
+   * *Flaw:* Passing non-Buffer objects or empty buffers to crypto primitives causes unhandled runtime exceptions.
+   * *Remediation:* Rigorous type and length validation with distinct machine-readable error codes (`INVALID_INPUT`, `INVALID_IV`, `INVALID_AUTH_TAG`).
+
+
 
 

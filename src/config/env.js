@@ -13,6 +13,20 @@ if (!process.env.JWT_SECRET && !isTest) {
   );
 }
 
+const HEX_64_REGEX = /^[0-9a-fA-F]{64}$/;
+
+if (!process.env.MASTER_ENCRYPTION_KEY && !isTest) {
+  throw new Error(
+    'FATAL: MASTER_ENCRYPTION_KEY environment variable is missing. Document encryption cannot function.'
+  );
+}
+
+if (process.env.MASTER_ENCRYPTION_KEY && !HEX_64_REGEX.test(process.env.MASTER_ENCRYPTION_KEY)) {
+  throw new Error(
+    'FATAL: MASTER_ENCRYPTION_KEY must be a valid 64-character hexadecimal string (representing 32 bytes).'
+  );
+}
+
 if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32 && !isTest) {
   console.warn(
     '\x1b[33m%s\x1b[0m',
@@ -29,7 +43,11 @@ export const env = {
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-key',
   JWT_SECRET: process.env.JWT_SECRET || (isTest ? 'test_jwt_secret_key_minimum_32_characters_long' : ''),
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1h',
-  BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12
+  BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12,
+  MASTER_ENCRYPTION_KEY:
+    process.env.MASTER_ENCRYPTION_KEY ||
+    (isTest ? '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' : ''),
+  SUPABASE_STORAGE_BUCKET: process.env.SUPABASE_STORAGE_BUCKET || 'vault-documents'
 };
 
 export default env;

@@ -242,6 +242,32 @@ Implement in-memory cryptographic utilities for encrypting and decrypting docume
    * *Flaw:* Passing non-Buffer objects or empty buffers to crypto primitives causes unhandled runtime exceptions.
    * *Remediation:* Rigorous type and length validation with distinct machine-readable error codes (`INVALID_INPUT`, `INVALID_IV`, `INVALID_AUTH_TAG`).
 
+---
+
+## Entry 6: In-Memory File Ingestion & Private Cloud Storage Service
+* **Date:** 2026-10-21
+* **Developer/Engineer:** Lead Security Software Engineer
+* **Phase:** Day 3 — Phase 3.2: Storage Service & Encrypted File Ingestion Middleware
+* **Component:** `src/middleware/upload.js`, `src/services/storageService.js`, `tests/storageService.test.js`
+
+### 1. Context & User Prompt
+Implement RAM-only Multer file ingestion middleware with a strict 10MB limit and a dedicated storage service interacting securely with private Supabase Storage buckets (`vault-documents`).
+
+### 2. Common AI Security Flaws Caught & Mitigated
+1. **Unencrypted Plaintext Spilling to Disk (Zero-Tolerance Violation):**
+   * *Flaw:* Standard AI file-upload implementations default to `multer.diskStorage()` or default temp paths (e.g. `/tmp`), persisting plaintext document buffers to physical server storage before encryption takes place.
+   * *Remediation:* Configured strictly in-memory storage via `multer.memoryStorage()`. Documents exist solely within transient RAM buffers and are encrypted in-memory before leaving process memory.
+2. **Denial of Service via Unbounded File Buffers:**
+   * *Flaw:* AI models often leave file size limits unconfigured or allow multi-file bursts in memory, making server processes vulnerable to Out-Of-Memory (OOM) crashes via payload inflation attacks.
+   * *Remediation:* Configured a hard 10MB limit (`limits: { fileSize: 10 * 1024 * 1024, files: 1 }`) and wrapped Multer execution in an Express middleware that intercepts `LIMIT_FILE_SIZE` and returns a clean HTTP 400 error.
+3. **Storage Collision & Ciphertext Overwrites:**
+   * *Flaw:* AI often sets `upsert: true` on storage API calls, allowing attackers or concurrent requests to silently overwrite existing encrypted files.
+   * *Remediation:* Enforced `upsert: false` on `uploadEncryptedDocument()` to guarantee immutability of stored objects.
+4. **Stream & Blob Type Mismatches in Node Runtimes:**
+   * *Flaw:* AI models often pass web `Blob` objects returned by `@supabase/supabase-js` directly into cryptographic decipher methods expecting Node `Buffer` instances, resulting in unhandled type exceptions.
+   * *Remediation:* Explicitly converted downloaded Blobs to Node `Buffer` instances using `Buffer.from(await data.arrayBuffer())`.
+
+
 
 
 

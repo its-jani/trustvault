@@ -267,6 +267,38 @@ Implement RAM-only Multer file ingestion middleware with a strict 10MB limit and
    * *Flaw:* AI models often pass web `Blob` objects returned by `@supabase/supabase-js` directly into cryptographic decipher methods expecting Node `Buffer` instances, resulting in unhandled type exceptions.
    * *Remediation:* Explicitly converted downloaded Blobs to Node `Buffer` instances using `Buffer.from(await data.arrayBuffer())`.
 
+---
+
+## Entry 7: Document Controllers, PEP Access Enforcement & API Route Authorization
+* **Date:** 2026-10-21
+* **Developer/Engineer:** Lead Security Software Engineer
+* **Phase:** Day 3 — Phase 3.3: Document Controllers, PEP Authorization & Route Wiring
+* **Component:** `src/controllers/documentController.js`, `src/routes/documentRoutes.js`, `src/server.js`, `tests/documentRoutes.test.js`
+
+### 1. Context & User Prompt
+Implement four document controller operations (`uploadDocument`, `downloadDocument`, `listDocuments`, `deleteDocument`), wire PEP authorization middleware on all document routes, and validate all access-control invariants with a 13-test integration suite covering BOLA, unauthorized access attempts, tenant isolation, and download-decrypt pipeline integrity.
+
+### 2. Common AI Security Flaws Caught & Mitigated
+1. **Object-Level Authorization Bypass (BOLA) — AI Omission:**
+   * *Flaw:* AI-generated download handlers often fetch documents by ID and stream them without performing a live authorization check. A user with a guessed or leaked document UUID can download any document from any other tenant.
+   * *Remediation:* Implemented a three-gate Policy Enforcement Point inside `downloadDocument`: (1) Confirm `isOwner` (`req.user.id === document.owner_id`), (2) confirm `isAdmin` (`req.user.role === 'ADMIN'`), and only if both are false (3) query `document_grants` to confirm a live READ grant exists. Unauthorized attempts log `UNAUTHORIZED_DOCUMENT_DOWNLOAD_ATTEMPT` with DENIED status before returning `403 Forbidden`.
+
+2. **Insecure Tenant Isolation in List Queries (Broken Object Property Level Auth):**
+   * *Flaw:* AI list-documents handlers frequently return all rows from the `documents` table with a client-controllable filter parameter (e.g., `?owner=...`), trusting the client to scope its own results. This exposes the full document inventory of every tenant to any authenticated user.
+   * *Remediation:* Server-side query composition enforces strict tenant scoping: non-ADMIN users receive only `owner_id.eq.{user.id}` results, or rows explicitly present in their `document_grants`. The query filter is entirely constructed on the server from `req.user` — no client-supplied filters accepted.
+
+3. **AES-GCM Ciphertext Envelope Coupling — AI Architectural Gap:**
+   * *Flaw:* AI-generated storage services often store IV and auth tag in a separate database column, creating a coupling risk where a column drop or migration silently discards the decryption material, permanently corrupting all stored documents.
+   * *Remediation:* Composite envelope string `storagePath#iv:authTag` is stored in a single `storage_path` TEXT column, ensuring IV and authentication tag travel atomically with the storage path reference and cannot be accidentally dissociated.
+
+4. **Orphaned Storage Objects on Database Insert Failure:**
+   * *Flaw:* AI implementations that separate storage upload from database insert (two discrete async calls) leave orphaned encrypted blobs in the private bucket when the database insert fails, leaking storage budget and creating unreachable objects.
+   * *Remediation:* Implemented a transactional rollback pattern: if `supabase.from('documents').insert()` fails after the blob is uploaded, an immediate `deleteDocumentFromStorage()` call is invoked inside the error handler to clean up the orphaned object before returning the error to the caller.
+
+5. **Missing Audit Trail for Delete Operations:**
+   * *Flaw:* AI delete controllers often return a success response without writing to the audit trail, leaving no forensic record of which admin or owner deleted which document and when.
+   * *Remediation:* `deleteDocument` performs storage removal, database deletion, then synchronously logs `DOCUMENT_DELETED` with the document ID, title, owner, and actor IP to `audit_logs`. Unauthorized delete attempts log `UNAUTHORIZED_DOCUMENT_DELETE_ATTEMPT` with DENIED status.
+
 
 
 

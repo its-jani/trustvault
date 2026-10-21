@@ -30,10 +30,11 @@ export async function logAuditEvent({
     const payload = {
       actor_id: validUserId,
       action: action || 'UNKNOWN_ACTION',
-      document_id: documentId,
+      document_id: null, // Preserved in details to prevent ON DELETE SET NULL from violating append-only trigger
       details: {
         ...details,
-        ...(resource && !documentId ? { resource } : {}),
+        documentId: documentId || (typeof resource === 'string' ? resource : null),
+        resource: resource || null,
         ...(userId && !validUserId ? { rawUserId: userId } : {}),
         ipAddress: ipAddress || 'unknown',
         status

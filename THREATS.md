@@ -17,6 +17,9 @@ This register employs the **STRIDE** methodology (Spoofing, Tampering, Repudiati
 | **TV-04** | Credential Stuffing & Brute-Forcing | Spoofing | API2: Broken Authentication | **HIGH** | **Mitigated (Bcrypt Salt 12 & Rate Limit Plan)** |
 | **TV-05** | Account Enumeration Oracle | Information Disclosure | API2: Broken Authentication | **MEDIUM** | **Mitigated (Uniform Error Responses)** |
 | **TV-06** | Privilege Escalation at Registration | Elevation of Privilege | API5: Broken Function Level Auth | **HIGH** | **Mitigated (Whitelist & Default VIEWER)** |
+| **TV-07** | BOLA on Document Download/Delete | Elevation of Privilege, Info Disclosure | API1: Broken Object Level Auth (BOLA) | **CRITICAL** | **Mitigated (Three-Gate PEP Check + Audit Log)** |
+| **TV-08** | AES-GCM IV Reuse & Auth Tag Strip | Tampering, Information Disclosure | API8: Security Misconfiguration | **CRITICAL** | **Mitigated (Atomic Envelope, Mandatory Auth Tag)** |
+| **TV-09** | Malicious File Upload & Oversized Payload | Tampering, Denial of Service, EoP | API4: Unrestricted Resource Consumption | **HIGH** | **Mitigated (10MB RAM Limit, UUID Paths, Private Bucket)** |
 
 ---
 
@@ -143,3 +146,85 @@ An attacker attempts to upload files with malicious filenames containing directo
   2. Unspecified roles default safely to `'VIEWER'`.
   3. Registration events explicitly log `USER_REGISTERED` with the assigned role in `audit_logs`.
 * **Verification Strategy:** Automated test verifies unauthorized roles return `400 Bad Request` and default registrations receive `VIEWER`.
+
+---
+
+## 5. Day 3 Threat Model: Document Access Control, Encryption & Storage Security
+
+### Threat Matrix Update (Day 3)
+
+| Threat ID | Threat Name | STRIDE Category | OWASP API | Severity | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **TV-07** | Broken Object Level Authorization (BOLA) on Document Download | Elevation of Privilege, Info Disclosure | API1: Broken Object Level Auth (BOLA) | **CRITICAL** | **Mitigated (Three-Gate PEP Check + Audit Log)** |
+| **TV-08** | AES-GCM Key/IV Misuse & Encryption Material Exposure | Tampering, Information Disclosure | API8: Security Misconfiguration | **CRITICAL** | **Mitigated (Atomic Envelope, Cryptographic Validation)** |
+| **TV-09** | Malicious File Upload & Content-Type Injection | Tampering, Denial of Service, EoP | API4: Unrestricted Resource Consumption / API1: BOLA | **HIGH** | **Mitigated (MIME Validation, RAM Buffer, Size Limit)** |
+
+---
+
+### TV-07: Broken Object Level Authorization (BOLA) on Document Access
+* **STRIDE Category:** Elevation of Privilege, Information Disclosure.
+* **OWASP API Classification:** API1: Broken Object Level Authorization (BOLA) — the #1 ranked API security risk.
+* **Attack Vector:** An authenticated viewer or unauthorized user directly supplies a known or enumerated document UUID to `GET /api/documents/:id/download`, bypassing any frontend-visible restriction checks and receiving another user's confidential encrypted document buffer.
+
+#### Attack Scenario:
+```http
+GET /api/documents/e4a67b12-f2ab-4c11-ba23-987654321abc/download
+Authorization: Bearer <viewer_jwt_without_any_grant>
+```
+→ Without server-side ownership/grant verification, the server returns the decrypted document.
+
+#### Defense-in-Depth Mitigation:
+1. **Three-Gate PEP Authorization Check (Live Database Evaluation):**
+   * Every `downloadDocument` call executes a mandatory live authorization sequence:
+     - Gate 1: `isOwner` — `req.user.id === document.owner_id`
+     - Gate 2: `isAdmin` — `req.user.role === 'ADMIN'`
+     - Gate 3: Active grant row in `document_grants` (`document_id + grantee_id` match)
+   * All three gates are evaluated against live database state on every request, not against JWT claims alone.
+2. **Immediate Revocation Enforcement:**
+   * Revocation of a grant in `document_grants` immediately prevents byte streaming on the next request — no caching, no pre-signed URLs, no client-trust.
+3. **Forensic Audit Trail for All Denied Attempts:**
+   * Every failed authorization logs `UNAUTHORIZED_DOCUMENT_DOWNLOAD_ATTEMPT` with actor ID, document ID, IP address, and DENIED status to the append-only `audit_logs` table.
+4. **BOLA Test Coverage:**
+   * Automated integration test `"unauthorized user download attempt blocked with 403 Forbidden"` asserts a viewer without a grant receives exactly `403 Forbidden` with no document buffer in the response body.
+* **Verification Strategy:** Integration tests assert BOLA resistance for `downloadDocument`, `listDocuments` (tenant isolation), and `deleteDocument` (owner/admin only).
+
+---
+
+### TV-08: AES-GCM Key/IV Misuse & Encryption Material Exposure
+* **STRIDE Category:** Tampering, Information Disclosure.
+* **OWASP API Classification:** API8: Security Misconfiguration (Cryptographic Failure).
+* **Attack Vector:** An attacker targets weaknesses in the encryption implementation — static or predictable IVs, missing auth tag verification, or dissociated decryption material — to decrypt document buffers without the master key, or to forge ciphertext that passes authentication.
+
+#### Attack Scenarios:
+1. **IV Reuse Attack:** If a static or timestamp-derived IV is used with the same key, two ciphertexts XORed together reveal the plaintext of both documents (keystream reuse attack).
+2. **Auth Tag Strip Attack:** An attacker modifies ciphertext in transit and omits/corrupts the GHASH authentication tag. If `decipher.setAuthTag()` is skipped, the tampered ciphertext decrypts silently.
+3. **Envelope Dissociation Attack:** IV and auth tag stored in a separate database column are accidentally cleared by a migration or `UPDATE` query, leaving ciphertexts permanently unrecoverable.
+
+#### Defense-in-Depth Mitigation:
+1. **Fresh Cryptographically Secure 12-byte IV Per Encryption (`crypto.randomBytes(12)`):** Zero IV reuse probability; each document encryption is cryptographically independent.
+2. **Mandatory GHASH Auth Tag Verification on Decryption:** `decipher.setAuthTag(Buffer.from(authTag, 'hex'))` is called before `decipher.final()`. Any tampering raises a `CryptoError: DECRYPTION_FAILED` and halts the pipeline.
+3. **Atomic Composite Envelope (`storagePath#iv:authTag`):** IV and auth tag are stored atomically with the storage path in a single `storage_path` TEXT column. They cannot be dissociated by partial writes or column drops.
+4. **64-Character Hex Master Key Enforcement:** `MASTER_ENCRYPTION_KEY` must be exactly 64 hex characters (32 bytes / 256-bit entropy). Startup fails fast if the key is missing, malformed, or shorter.
+* **Verification Strategy:** Automated crypto tests assert IV uniqueness across repeated encryptions, auth tag tampering detection, and decryption rejection of corrupted ciphertexts.
+
+---
+
+### TV-09: Malicious File Upload & Content-Type Injection
+* **STRIDE Category:** Tampering, Denial of Service, Elevation of Privilege.
+* **OWASP API Classification:** API4: Unrestricted Resource Consumption, API1: Broken Object Level Authorization.
+* **Attack Vector:** An attacker uploads maliciously crafted files — oversized payloads for OOM exhaustion, files with path traversal filenames, server-side script files disguised with spoofed MIME types, or polyglot files that execute as multiple content types.
+
+#### Attack Scenarios:
+1. **OOM Resource Exhaustion:** Attacker sends concurrent multipart uploads with 100MB+ payloads to exhaust server RAM and crash the Node.js process.
+2. **Path Traversal via Filename Injection:**
+   ```
+   Content-Disposition: form-data; name="document"; filename="../../src/config/supabase.js"
+   ```
+3. **MIME Spoofing for Server-Side Execution:** Attacker uploads a `.js` or `.php` script with `Content-Type: application/pdf` to bypass content checks and achieve stored XSS or server-side execution.
+
+#### Defense-in-Depth Mitigation:
+1. **Strict 10MB RAM Buffer Limit (`multer.memoryStorage()`):** Hard `fileSize: 10 * 1024 * 1024` limit; single-file enforcement (`files: 1`). `LIMIT_FILE_SIZE` intercepted cleanly and returned as HTTP 400.
+2. **Filename Sanitization & UUID-Based Storage Paths:** Original filenames stripped of all non-alphanumeric characters; storage paths use server-generated UUID keys. Attacker-controlled filenames never reach the filesystem or bucket.
+3. **Private Bucket Enforcement — No Public URLs:** Storage bucket is configured as private. No direct browser-accessible URL exists for any stored object.
+4. **In-Memory Encryption Before Any I/O:** Documents are AES-256-GCM encrypted in RAM before any write. Even if a script were uploaded, it would be stored as opaque ciphertext with no execution path.
+* **Verification Strategy:** Upload tests assert 400 on oversized files; filename sanitization tests verify traversal sequences are stripped; auth middleware tests confirm unauthenticated uploads receive 401.

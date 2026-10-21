@@ -45,27 +45,36 @@ trustvault/
 ├── .gitignore                 # Secrets, logs, and dependency ignore rules
 ├── package.json               # Dependencies and scripts (ES Modules)
 ├── README.md                  # Project overview and runbook
-├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes
-├── THREATS.md                 # STRIDE threat model & attack vector register
+├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (7 entries)
+├── THREATS.md                 # STRIDE threat model & attack vector register (TV-01 → TV-09)
 ├── tests/
-│   ├── authUtils.test.js      # Password & JWT cryptographic unit tests
-│   ├── middleware.test.js     # PEP authentication & RBAC middleware tests
-│   └── authRoutes.test.js     # Auth API routes integration tests
+│   ├── authUtils.test.js      # Password & JWT cryptographic unit tests (10 tests)
+│   ├── middleware.test.js     # PEP authentication & RBAC middleware tests (11 tests)
+│   ├── authRoutes.test.js     # Auth API routes integration tests (12 tests)
+│   ├── cryptoUtils.test.js    # AES-256-GCM crypto utilities unit tests (9 tests)
+│   ├── storageService.test.js # Multer ingestion & storage service tests (6 tests)
+│   └── documentRoutes.test.js # Document API PEP access enforcement tests (13 tests)
 └── src/
     ├── config/
-    │   ├── env.js             # Validated environment configurations
+    │   ├── env.js             # Validated environment configurations (JWT, AES, Supabase)
     │   ├── schema.sql         # Supabase PostgreSQL schema DDL with immutability trigger
     │   └── supabase.js        # Headless Supabase client with Service Role authorization
     ├── controllers/
-    │   └── authController.js  # Registration, login, and identity controllers
+    │   ├── authController.js  # Registration, login, and identity controllers
+    │   └── documentController.js # Upload, download, list, delete controllers with PEP
     ├── middleware/
     │   ├── auth.js            # PEP Bearer JWT authentication & audit logger
     │   ├── errorHandler.js    # Centralized Express error handler (no stack leaks in prod)
-    │   └── rbac.js            # Policy Enforcement Point RBAC authorization
+    │   ├── rbac.js            # Policy Enforcement Point RBAC authorization
+    │   └── upload.js          # In-memory Multer middleware (RAM-only, 10MB limit)
     ├── routes/
-    │   └── authRoutes.js      # Public/protected auth route definitions
+    │   ├── authRoutes.js      # Public/protected auth route definitions
+    │   └── documentRoutes.js  # PEP-protected document route definitions
+    ├── services/
+    │   └── storageService.js  # Private Supabase Storage CRUD (upload/download/delete)
     ├── utils/
     │   ├── auditLogger.js     # Synchronous audit log persistence helper
+    │   ├── crypto.js          # AES-256-GCM envelope encrypt/decrypt utilities
     │   ├── jwt.js             # Structured JWT issue & verify utilities
     │   └── password.js        # Constant-time bcrypt hashing utilities
     └── server.js              # Express app bootstrap, helmet, cors, and healthcheck route
@@ -216,7 +225,72 @@ curl http://localhost:5000/api/health
 
 ---
 
-## 7. Security Documentation
+## 7. Document API Endpoints (Day 3)
 
-* [`PROMPTS.md`](./PROMPTS.md): Complete audit log of AI interactions across Day 1 & Day 2, documenting security flaws in AI code and corrective human engineering.
-* [`THREATS.md`](./THREATS.md): Full STRIDE and OWASP API 2023 threat modeling register covering Audit Immutability, Path Traversal, JWT Forgery, Credential Stuffing, Account Enumeration, and Privilege Escalation.
+All document endpoints require `Authorization: Bearer <token>` header.
+
+### 1. Upload Document (Encrypted)
+* **Endpoint:** `POST /api/documents/upload`
+* **Access:** Any authenticated role
+* **Body:** `multipart/form-data` with field `document` (file), `title` (string), `category` (string)
+* **Security:** File encrypted in-memory with AES-256-GCM before storage. Ciphertext uploaded to private bucket.
+* **Response (`201 Created`):**
+  ```json
+  {
+    "message": "Document uploaded and encrypted successfully.",
+    "document": { "id": "...", "title": "...", "category": "...", "file_size": 1024, "owner_id": "..." }
+  }
+  ```
+
+### 2. List Documents (Tenant-Isolated)
+* **Endpoint:** `GET /api/documents`
+* **Access:** Any authenticated role
+* **Security:** Non-ADMIN users see only documents they own or have an active grant for. Server constructs all filters — no client-supplied query params trusted.
+* **Response (`200 OK`):**
+  ```json
+  { "documents": [ { "id": "...", "title": "...", "category": "...", "owner_id": "..." } ] }
+  ```
+
+### 3. Download Document (PEP-Authorized Streaming)
+* **Endpoint:** `GET /api/documents/:id/download`
+* **Access:** Document owner, ADMIN, or user with active `document_grants` row
+* **Security:** Three-gate live DB authorization check per request. Decrypted in-memory. Never exposes raw storage URLs.
+* **Response (`200 OK`):** Binary file buffer with appropriate `Content-Type` and `Content-Disposition` headers.
+* **Denied Response (`403 Forbidden`):**
+  ```json
+  { "error": "Access denied: Insufficient document permissions." }
+  ```
+
+### 4. Delete Document
+* **Endpoint:** `DELETE /api/documents/:id`
+* **Access:** Document owner or ADMIN only
+* **Security:** PEP check enforced. Deletes blob from storage, removes DB record (cascades grants), logs `DOCUMENT_DELETED` to audit trail.
+* **Response (`200 OK`):**
+  ```json
+  { "message": "Document deleted successfully.", "id": "..." }
+  ```
+
+---
+
+## 8. Running the Test Suite
+
+```bash
+npm test
+```
+
+**Total: 61 automated tests across 6 suites:**
+| Suite | Tests | Coverage |
+|---|---|---|
+| `authUtils.test.js` | 10 | bcrypt hashing, JWT sign/verify, token error codes |
+| `middleware.test.js` | 11 | PEP auth middleware, RBAC enforcement, audit log writes |
+| `authRoutes.test.js` | 12 | Register/Login/Me endpoints, input validation, error responses |
+| `cryptoUtils.test.js` | 9 | AES-256-GCM encrypt/decrypt, IV uniqueness, auth tag tampering |
+| `storageService.test.js` | 6 | Multer 10MB limit, RAM-only buffer, storage CRUD operations |
+| `documentRoutes.test.js` | 13 | BOLA prevention, tenant isolation, upload/download/delete PEP |
+
+---
+
+## 9. Security Documentation
+
+* [`PROMPTS.md`](./PROMPTS.md): 7-entry AI interaction audit log across Days 1–3, documenting AI-generated security flaws and corrective human engineering.
+* [`THREATS.md`](./THREATS.md): STRIDE + OWASP API 2023 threat register — 9 threat vectors (TV-01 to TV-09) covering audit immutability, BOLA, path traversal, JWT forgery, credential stuffing, AES-GCM misuse, and malicious file uploads.

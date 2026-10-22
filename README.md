@@ -45,15 +45,17 @@ trustvault/
 ├── .gitignore                 # Secrets, logs, and dependency ignore rules
 ├── package.json               # Dependencies and scripts (ES Modules)
 ├── README.md                  # Project overview and runbook
-├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (7 entries)
-├── THREATS.md                 # STRIDE threat model & attack vector register (TV-01 → TV-09)
+├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (Days 1–4)
+├── THREATS.md                 # STRIDE threat model & attack vector register (TV-01 → TV-12)
 ├── tests/
 │   ├── authUtils.test.js      # Password & JWT cryptographic unit tests (10 tests)
 │   ├── middleware.test.js     # PEP authentication & RBAC middleware tests (11 tests)
 │   ├── authRoutes.test.js     # Auth API routes integration tests (12 tests)
 │   ├── cryptoUtils.test.js    # AES-256-GCM crypto utilities unit tests (9 tests)
 │   ├── storageService.test.js # Multer ingestion & storage service tests (6 tests)
-│   └── documentRoutes.test.js # Document API PEP access enforcement tests (13 tests)
+│   ├── documentRoutes.test.js # Document API PEP access enforcement tests (13 tests)
+│   ├── grantRoutes.test.js    # Grant delegation & immediate revocation PEP tests (14 tests)
+│   └── auditRoutes.test.js    # Admin audit query, filtering & RBAC tests (11 tests)
 └── src/
     ├── config/
     │   ├── env.js             # Validated environment configurations (JWT, AES, Supabase)
@@ -61,7 +63,9 @@ trustvault/
     │   └── supabase.js        # Headless Supabase client with Service Role authorization
     ├── controllers/
     │   ├── authController.js  # Registration, login, and identity controllers
-    │   └── documentController.js # Upload, download, list, delete controllers with PEP
+    │   ├── documentController.js # Upload, download, list, delete controllers with PEP
+    │   ├── grantController.js # Document access grant delegation and revocation handlers
+    │   └── auditController.js # Admin forensic audit query and filter handlers
     ├── middleware/
     │   ├── auth.js            # PEP Bearer JWT authentication & audit logger
     │   ├── errorHandler.js    # Centralized Express error handler (no stack leaks in prod)
@@ -69,9 +73,13 @@ trustvault/
     │   └── upload.js          # In-memory Multer middleware (RAM-only, 10MB limit)
     ├── routes/
     │   ├── authRoutes.js      # Public/protected auth route definitions
-    │   └── documentRoutes.js  # PEP-protected document route definitions
+    │   ├── documentRoutes.js  # PEP-protected document route definitions
+    │   ├── grantRoutes.js     # Grant delegation and revocation route definitions
+    │   └── auditRoutes.js     # Admin-only forensic audit trail route definitions
     ├── services/
-    │   └── storageService.js  # Private Supabase Storage CRUD (upload/download/delete)
+    │   ├── storageService.js  # Private Supabase Storage CRUD (upload/download/delete)
+    │   ├── grantService.js    # Document grant delegation, verification, and revocation service
+    │   └── auditService.js    # Filtered and paginated forensic audit query service
     ├── utils/
     │   ├── auditLogger.js     # Synchronous audit log persistence helper
     │   ├── crypto.js          # AES-256-GCM envelope encrypt/decrypt utilities
@@ -272,13 +280,96 @@ All document endpoints require `Authorization: Bearer <token>` header.
 
 ---
 
-## 8. Running the Test Suite
+## 8. Grant Delegation & Audit API Endpoints (Day 4)
+
+All grant and audit endpoints require `Authorization: Bearer <token>` header.
+
+### 1. Create Document Access Grant
+* **Endpoint:** `POST /api/grants`
+* **Access:** Document owner or ADMIN
+* **Request Body:**
+  ```json
+  {
+    "documentId": "4c3b8e12-3456-4abc-8def-123456789abc",
+    "granteeEmail": "viewer@trustvault.local"
+  }
+  ```
+* **Security:** Enforces owner/admin authorization gate, prevents self-granting (`400 Bad Request`), checks user existence (`404`), blocks duplicate grants (`409 Conflict`), and logs `GRANT_CREATED` to audit trail.
+* **Response (`201 Created`):**
+  ```json
+  {
+    "message": "Access grant created successfully.",
+    "grant": {
+      "id": "7d2e1a34-bc56-4789-9012-abcdef123456",
+      "document_id": "4c3b8e12-3456-4abc-8def-123456789abc",
+      "grantee_id": "8f3a2b1c-4d5e-4678-8901-abcdef987654",
+      "granted_to": "viewer@trustvault.local",
+      "permission": "READ"
+    }
+  }
+  ```
+
+### 2. Revoke Document Access Grant (Immediate Invalidation)
+* **Endpoint:** `DELETE /api/grants/:id`
+* **Access:** Document owner, grant creator, or ADMIN
+* **Security:** Deletes grant row from `document_grants`, immediately terminating download rights at the live PEP gate with zero caching latency. Logs `GRANT_REVOKED` to audit trail.
+* **Response (`200 OK`):**
+  ```json
+  { "message": "Grant revoked successfully.", "grantId": "7d2e1a34-bc56-4789-9012-abcdef123456" }
+  ```
+
+### 3. List Document Access Grants
+* **Endpoint:** `GET /api/grants/document/:documentId`
+* **Access:** Document owner or ADMIN only
+* **Response (`200 OK`):**
+  ```json
+  {
+    "grants": [
+      {
+        "id": "7d2e1a34-bc56-4789-9012-abcdef123456",
+        "document_id": "4c3b8e12-3456-4abc-8def-123456789abc",
+        "grantee_id": "8f3a2b1c-4d5e-4678-8901-abcdef987654",
+        "grantee_email": "viewer@trustvault.local",
+        "permission": "READ"
+      }
+    ]
+  }
+  ```
+
+### 4. Query Security Audit Logs
+* **Endpoint:** `GET /api/audit-logs`
+* **Access:** ADMIN role only (Double-layered PEP enforcement)
+* **Query Parameters:** `page` (default 1), `limit` (default 50, max 100), `action`, `actorId` (UUID), `documentId` (UUID), `startDate` (ISO 8601), `endDate` (ISO 8601)
+* **Security:** Clamps limit to prevent DoS, sanitizes UUID and date parameters, queries against indexed `timestamp` column.
+* **Response (`200 OK`):**
+  ```json
+  {
+    "data": [
+      {
+        "id": "e7b8a1c2-3d4e-4f5a-8b9c-0123456789ab",
+        "timestamp": "2026-10-22T08:00:00.000Z",
+        "created_at": "2026-10-22T08:00:00.000Z",
+        "actor_id": "8f3a2b1c-4d5e-4678-8901-abcdef987654",
+        "action": "GRANT_CREATED",
+        "document_id": "4c3b8e12-3456-4abc-8def-123456789abc",
+        "details": { "granteeEmail": "viewer@trustvault.local", "status": "SUCCESS" }
+      }
+    ],
+    "count": 185,
+    "page": 1,
+    "totalPages": 4
+  }
+  ```
+
+---
+
+## 9. Running the Test Suite
 
 ```bash
 npm test
 ```
 
-**Total: 61 automated tests across 6 suites:**
+**Total: 86 automated tests across 8 suites (100% passing):**
 | Suite | Tests | Coverage |
 |---|---|---|
 | `authUtils.test.js` | 10 | bcrypt hashing, JWT sign/verify, token error codes |
@@ -287,10 +378,12 @@ npm test
 | `cryptoUtils.test.js` | 9 | AES-256-GCM encrypt/decrypt, IV uniqueness, auth tag tampering |
 | `storageService.test.js` | 6 | Multer 10MB limit, RAM-only buffer, storage CRUD operations |
 | `documentRoutes.test.js` | 13 | BOLA prevention, tenant isolation, upload/download/delete PEP |
+| `grantRoutes.test.js` | 14 | Grant delegation, instant revocation PEP check, non-owner blocking, self-grant rejection |
+| `auditRoutes.test.js` | 11 | Admin-only RBAC, limit clamping, action/actor/date filtering, malformed parameter handling |
 
 ---
 
-## 9. Security Documentation
+## 10. Security Documentation
 
-* [`PROMPTS.md`](./PROMPTS.md): 7-entry AI interaction audit log across Days 1–3, documenting AI-generated security flaws and corrective human engineering.
-* [`THREATS.md`](./THREATS.md): STRIDE + OWASP API 2023 threat register — 9 threat vectors (TV-01 to TV-09) covering audit immutability, BOLA, path traversal, JWT forgery, credential stuffing, AES-GCM misuse, and malicious file uploads.
+* [`PROMPTS.md`](./PROMPTS.md): AI interaction audit log across Days 1–4, documenting AI-generated security flaws and corrective human engineering.
+* [`THREATS.md`](./THREATS.md): STRIDE + OWASP API 2023 threat register — 12 threat vectors (TV-01 to TV-12) covering audit immutability, BOLA, path traversal, JWT forgery, credential stuffing, AES-GCM misuse, malicious file uploads, delegation BOLA, self-granting, and audit log DoS/inspection.

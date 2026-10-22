@@ -20,6 +20,9 @@ This register employs the **STRIDE** methodology (Spoofing, Tampering, Repudiati
 | **TV-07** | BOLA on Document Download/Delete | Elevation of Privilege, Info Disclosure | API1: Broken Object Level Auth (BOLA) | **CRITICAL** | **Mitigated (Three-Gate PEP Check + Audit Log)** |
 | **TV-08** | AES-GCM IV Reuse & Auth Tag Strip | Tampering, Information Disclosure | API8: Security Misconfiguration | **CRITICAL** | **Mitigated (Atomic Envelope, Mandatory Auth Tag)** |
 | **TV-09** | Malicious File Upload & Oversized Payload | Tampering, Denial of Service, EoP | API4: Unrestricted Resource Consumption | **HIGH** | **Mitigated (10MB RAM Limit, UUID Paths, Private Bucket)** |
+| **TV-10** | BOLA & Privilege Escalation in Delegation | Elevation of Privilege, Tampering | API1: Broken Object Level Authorization | **CRITICAL** | **Mitigated (Server-Side Owner/Admin Check & Audit)** |
+| **TV-11** | Self-Granting & Logic Flaws in Delegation | Tampering, Elevation of Privilege | API1: Broken Object Level Authorization | **HIGH** | **Mitigated (Grantee Invariant Enforcement: 400 Bad Request)** |
+| **TV-12** | Unauthorized Forensic Inspection & DoS Querying | Information Disclosure, Denial of Service | API1: BOLA / API4: Unrestricted Resource Consumption | **HIGH** | **Mitigated (Double-Layered RBAC, UUID Sanitization, Limit Clamping)** |
 
 ---
 
@@ -228,3 +231,73 @@ Authorization: Bearer <viewer_jwt_without_any_grant>
 3. **Private Bucket Enforcement — No Public URLs:** Storage bucket is configured as private. No direct browser-accessible URL exists for any stored object.
 4. **In-Memory Encryption Before Any I/O:** Documents are AES-256-GCM encrypted in RAM before any write. Even if a script were uploaded, it would be stored as opaque ciphertext with no execution path.
 * **Verification Strategy:** Upload tests assert 400 on oversized files; filename sanitization tests verify traversal sequences are stripped; auth middleware tests confirm unauthenticated uploads receive 401.
+
+---
+
+## 5. Day 4 Threat Model: Fine-Grained Delegation & Administrative Audit Trail
+
+### TV-10: BOLA & Privilege Escalation in Grant Delegation (`POST /api/grants`, `DELETE /api/grants/:id`)
+* **STRIDE Category:** Elevation of Privilege, Tampering.
+* **OWASP API Classification:** API1:2023 Broken Object Level Authorization (BOLA), API5:2023 Broken Function Level Authorization.
+* **Attack Vector:** An attacker with valid credentials targets document UUIDs belonging to other tenants to grant themselves view access, or revokes legitimate access grants of third parties to disrupt business workflows (denial of access).
+
+#### Attack Scenarios:
+1. **Unauthorized Delegation:** A malicious `VIEWER` or `OWNER` submits `POST /api/grants` with the `documentId` of a confidential document owned by an executive, specifying their own collaborator email. If the server does not verify document ownership before inserting into `document_grants`, unauthorized view access is established.
+2. **Disruptive Grant Revocation:** An attacker enumerates grant UUIDs via `DELETE /api/grants/:id` to strip legitimate permissions across other tenants without possessing ownership of the target document or grant.
+
+#### Defense-in-Depth Mitigation:
+1. **Server-Side Ownership Verification (`grantService.js`):**
+   * Before inserting into `document_grants`, `createGrant` fetches the document record from PostgreSQL and asserts `document.owner_id === grantedByUserId` OR `grantedByUserRole === 'ADMIN'`. Non-owners receive an immediate `403 Forbidden` response.
+2. **Authoritative Revocation Scoping:**
+   * `revokeGrant` verifies that the revoking actor is either the document owner, the original grant creator (`granted_by`), or an `ADMIN`. Third-party attempts are blocked with `403 Forbidden`.
+3. **Forensic Security Auditing:**
+   * Every unauthorized delegation attempt synchronously records `UNAUTHORIZED_GRANT_CREATION_ATTEMPT` with actor ID, target document ID, and `DENIED` status in `audit_logs`. Legitimate grants and revocations log `GRANT_CREATED` and `GRANT_REVOKED` respectively.
+4. **Immediate Revocation Enforcement:**
+   * Revocation executes an atomic `DELETE` on `document_grants`. Because the document streaming PEP gate queries live database state on every download, access is terminated immediately with zero cache lag.
+* **Verification Strategy:** Automated integration tests in `tests/grantRoutes.test.js` assert 403 on non-owner grant attempts, 403 on unauthorized revocation, and confirm immediate 403 download blockage after grant deletion.
+
+---
+
+### TV-11: Self-Granting & Logic Flaws in Access Delegation
+* **STRIDE Category:** Tampering, Elevation of Privilege.
+* **OWASP API Classification:** API1:2023 Broken Object Level Authorization, Business Logic Flaws.
+* **Attack Vector:** A document owner grants explicit permissions to their own account, or an attacker attempts to confuse access control models by creating redundant grants to bypass downstream security policies or skew audit metrics.
+
+#### Attack Scenarios:
+1. **Redundant Self-Delegation:** An owner issues grants to their own email (`grantee.id === grantedByUserId`), bloating the `document_grants` table, skewing user delegation counts, and potentially bypassing tenant ownership rules during future schema refactoring.
+2. **Duplicate Grant Inflation:** An attacker repeatedly calls `POST /api/grants` with the same `(document_id, grantee_id)` tuple to trigger unhandled SQL constraint errors or create duplicate records.
+
+#### Defense-in-Depth Mitigation:
+1. **Self-Granting Invariant Guard:**
+   * `createGrant` compares resolved `grantee.id` against `grantedByUserId`. If equal, it halts execution before database insertion and returns `400 Bad Request` with message `"Cannot grant document access to yourself."`.
+2. **Composite Unique Constraint & Pre-Check:**
+   * PostgreSQL table enforces `CONSTRAINT unique_document_grantee UNIQUE (document_id, grantee_id)`.
+   * Service performs a proactive pre-check query and returns a clean `409 Conflict` (`"Access grant already exists for this user."`) instead of exposing raw database collision errors.
+3. **Grantee Account Existence Validation:**
+   * Requires grantee to be an existing registered user. Non-existent emails trigger a clean `404 Not Found` (`"Grantee user not found."`).
+* **Verification Strategy:** Automated integration tests verify that self-granting requests return 400, duplicate grants return 409, and unregistered emails return 404.
+
+---
+
+### TV-12: Unauthorized Forensic Inspection & DoS via Audit Querying (`GET /api/audit-logs`)
+* **STRIDE Category:** Information Disclosure, Denial of Service.
+* **OWASP API Classification:** API1:2023 Broken Object Level Authorization, API4:2023 Unrestricted Resource Consumption, API5:2023 Broken Function Level Authorization.
+* **Attack Vector:** Lower-privileged tenants (`VIEWER` or `OWNER`) query the audit logs endpoint to perform internal reconnaissance on user activity, IP addresses, and document access history, or an attacker submits unbounded queries or unvalidated parameters to cause memory exhaustion (DoS).
+
+#### Attack Scenarios:
+1. **Forensic Reconnaissance:** A non-admin user calls `GET /api/audit-logs` to inspect administrative actions, enumerate document IDs, and harvest forensic metadata.
+2. **Unbounded Query Memory Exhaustion:** An attacker submits requests with `?limit=100000` to force the Node process to load massive datasets into RAM, precipitating an Out-of-Memory (OOM) crash.
+3. **Database Error Injection via Filter Parameters:** An attacker submits malformed strings into UUID or date filter fields (e.g., `?actorId=malformed'--`), hoping to trigger SQL parser errors or leak database internals.
+
+#### Defense-in-Depth Mitigation:
+1. **Double-Layered RBAC Enforcement:**
+   * Route layer applies `requireRole(['ADMIN'])`.
+   * Service layer (`auditService.js`) independently validates `requesterUser.role === 'ADMIN'`, rejecting unauthorized callers with `403 Forbidden` and logging `UNAUTHORIZED_AUDIT_QUERY_ATTEMPT`.
+2. **Strict Limit Clamping & Pagination:**
+   * Requested `limit` parameter is strictly clamped to a maximum of 100 (`Math.min(100, Math.max(1, limit))`). Queries default to 50 rows, preventing buffer inflation attacks.
+3. **Input Parameter Sanitization & Type Validation:**
+   * `actorId` and `documentId` parameters are validated against RFC 4122 UUID regular expressions; malformed values return `400 Bad Request`.
+   * `startDate` and `endDate` are verified as valid ISO 8601 strings before query composition.
+4. **Resilient Dual-Path Document Filtering:**
+   * Supports filtering on both explicit `document_id` column and `details->>documentId` JSONB path, ensuring audit integrity regardless of payload shape.
+* **Verification Strategy:** Automated integration tests in `tests/auditRoutes.test.js` assert 403 on VIEWER/OWNER queries, verify limit clamping to 100, assert 400 on invalid UUID/date parameters, and confirm multi-field filtering accuracy.

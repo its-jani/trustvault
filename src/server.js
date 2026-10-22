@@ -7,6 +7,7 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/authRoutes.js';
 import documentRoutes from './routes/documentRoutes.js';
 import grantRoutes from './routes/grantRoutes.js';
+import auditRoutes from './routes/auditRoutes.js';
 
 dotenv.config();
 
@@ -123,6 +124,7 @@ app.get('/api/health', async (req, res, next) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/grants', grantRoutes);
+app.use('/api/audit-logs', auditRoutes);
 
 // 7. 404 Handler for Unmatched Endpoints
 app.use(notFoundHandler);

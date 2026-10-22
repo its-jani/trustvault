@@ -1,334 +1,79 @@
-# TrustVault — AI Interaction & Prompt Engineering Audit Log (`PROMPTS.md`)
+# TrustVault — AI Interaction & Security Engineering Audit Log (`PROMPTS.md`)
 
-This log provides an honest, auditable record of all AI interactions throughout the development of TrustVault for the Snovasys Hiring Challenge 2026. Every entry documents the original prompt, the AI-generated output, security vulnerabilities or architectural flaws detected in that output, and the corrective engineering measures implemented.
-
----
-
-## Entry 1: Initial Database Schema Design & Audit Immutability Enforcement
-* **Date:** 2026-10-19
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 1 — Foundation & Schema Architecture
-* **Component:** Database Schema (Supabase / PostgreSQL)
-
-### 1. Context & User Prompt
-The initial objective was to define a production-grade relational database schema for TrustVault supporting user identities, role-based controls, document metadata, explicit document grants, and an audit trail.
-
-**Prompt Submitted:**
-> *"Generate a PostgreSQL schema for a security-first document management platform called TrustVault. The schema needs to support users (roles: ADMIN, OWNER, VIEWER), documents (metadata and owner), explicit permissions (grants for READ/EDIT), and an audit log table that records all access attempts and modifications."*
+This log provides a transparent, auditable record of how AI assistance was utilized, scrutinized, and corrected across each phase of building TrustVault for the Snovasys Hiring Challenge 2026. Every section documents the phase objective, key architectural decisions, and the critical security flaws identified and mitigated by the engineering team.
 
 ---
 
-### 2. AI-Generated Output (Summary & Flaws)
-The AI produced standard DDL statements:
-* Created `users`, `documents`, `document_grants`, and an `audit_logs` table.
-* Used basic primary and foreign keys.
-* Created standard B-Tree indexes on foreign keys.
+## Day 1: Foundation, Hardened Core & Schema Immutability
 
-```sql
--- AI-Generated Snippet (Exemplary excerpt showing flaws)
-CREATE TABLE audit_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMPTZ DEFAULT NOW(),
-    actor_id UUID REFERENCES users(id),
-    action VARCHAR(50),
-    document_id UUID REFERENCES documents(id),
-    details JSONB
-);
-```
+### 1. Objective
+Establish the production PostgreSQL database schema, Express application core, defense-in-depth HTTP security headers, startup fail-fast environment validation, and centralized operational error handling.
+
+### 2. Key Architectural Decisions
+* **Database Schema (`src/config/schema.sql`):** Designed normalized tables for `users`, `documents`, `document_grants`, and `audit_logs` with custom PostgreSQL ENUMs (`user_role`, `grant_permission`) and performance indexes.
+* **HTTP Security Hardening (`src/server.js`):** Implemented Helmet with strict Content Security Policy (CSP), HTTP Strict Transport Security (HSTS preloading), frameguard clickjacking protection, and origin-validated CORS whitelisting.
+* **Centralized Error Handling (`src/middleware/errorHandler.js`):** Created an `AppError` operational error class. Non-operational errors and raw stack traces are strictly suppressed in production responses to prevent internal reconnaissance.
+* **Fail-Fast Environment Validation (`src/config/env.js`):** Enforced synchronous validation of mandatory environment variables on process startup.
+
+### 3. Security Flaws Caught & Mitigated
+* **Mutable Audit Logs (Zero-Tolerance Violation):** AI generated standard mutable SQL tables where `UPDATE` or `DELETE` could erase access trails. Engineered a database-level PL/pgSQL trigger (`prevent_audit_log_alteration`) that terminates any tampering attempt with a PostgreSQL exception.
+* **Information Leakage via Error Responses:** AI error handlers returned unhandled database error objects and raw stack traces directly to API clients. Replaced with standardized JSON error envelopes.
+* **Permissive CORS Wildcarding:** AI boilerplate defaulted to `origin: '*'` alongside credentials. Replaced with explicit origin validation against allowed frontend domains.
 
 ---
 
-### 3. Critical Security Flaws Identified by Engineer
+## Day 2: Authentication, Password Cryptography & PEP Enforcement
 
-1. **Absence of Audit Log Immutability (Zero-Tolerance Violation):**
-   * **Flaw:** The AI created a mutable SQL table. Any process, service role script, or compromised SQL query could execute `UPDATE audit_logs SET ...` or `DELETE FROM audit_logs WHERE ...` without restriction.
-   * **Impact:** High severity. An adversary or rogue administrator could alter audit history to cover unauthorized document exfiltration or access denial incidents.
-   * **Rule Violated:** Zero-Tolerance Rule #3: *Audit Log Tampering: Allowing UPDATE or DELETE SQL queries against audit_logs.*
+### 1. Objective
+Build server-side user authentication, industry-standard password hashing, stateless JWT session tokens, and Policy Enforcement Point (PEP) middleware with synchronous forensic audit logging.
 
-2. **Lack of Cryptographic Hash Chaining Fields:**
-   * **Flaw:** The AI did not incorporate fields for tamper-evident chaining (`previous_hash`, `current_hash`).
-   * **Impact:** Without a cryptographic integrity trail, database snapshots cannot be mathematically verified against external verification anchors.
+### 2. Key Architectural Decisions
+* **Password Hashing (`src/utils/password.js`):** Implemented `bcryptjs` with cost factor 12 (4,096 rounds), providing brute-force resistance without blocking the Node event loop.
+* **Stateless JWT Session Management (`src/utils/jwt.js`):** Configured signed HMAC-SHA256 tokens with a 1-hour expiration window, pinned algorithms, and UUID-based identity payload claims.
+* **PEP Middleware Layer (`src/middleware/auth.js`, `src/middleware/rbac.js`):** Intercepts incoming requests, validates Bearer JWT signatures, enforces role permissions (`ADMIN`, `OWNER`, `VIEWER`), and attaches verified claims to `req.user`.
+* **Synchronous Audit Logging (`src/utils/auditLogger.js`):** Synchronously records authentication successes and denials to `audit_logs` using a service-role Supabase client.
 
-3. **Inadequate Cascade vs. Restrict Semantics on Forensic Logs:**
-   * **Flaw:** If a user or document was deleted, standard `ON DELETE CASCADE` on `audit_logs` would purge historical forensic records associated with that entity.
-   * **Resolution:** Audit log foreign keys must use `ON DELETE SET NULL` or remain unconstrained IDs to prevent cascade deletion of historical records.
-
----
-
-### 4. Human Remediation & Corrective Implementation
-
-To satisfy the zero-tolerance security requirements, a custom PostgreSQL PL/pgSQL trigger function `prevent_audit_log_alteration()` was engineered. This trigger intercepts any `UPDATE` or `DELETE` attempt at the database engine level and terminates the transaction with an explicit security exception.
-
-Additionally, `previous_hash` and `current_hash` columns were added to support cryptographic verification chains.
-
-#### Production Schema & Trigger Script (Executed via Supabase Dashboard):
-
-```sql
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- Define Custom Enum Types
-CREATE TYPE user_role AS ENUM ('ADMIN', 'OWNER', 'VIEWER');
-CREATE TYPE grant_permission AS ENUM ('READ', 'EDIT');
-
--- 1. Users Table
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    full_name VARCHAR(255) NOT NULL,
-    role user_role NOT NULL DEFAULT 'VIEWER',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 2. Documents Table
-CREATE TABLE IF NOT EXISTS documents (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    title VARCHAR(255) NOT NULL,
-    category VARCHAR(100) NOT NULL DEFAULT 'General',
-    storage_path TEXT NOT NULL,
-    file_size_bytes BIGINT NOT NULL,
-    mime_type VARCHAR(100) NOT NULL,
-    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 3. Document Grants Table (Explicit Per-User Permissions)
-CREATE TABLE IF NOT EXISTS document_grants (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    grantee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    permission grant_permission NOT NULL,
-    granted_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_document_grantee UNIQUE (document_id, grantee_id)
-);
-
--- 4. Audit Logs Table (Append-Only, Tamper-Evident)
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    timestamp TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    action VARCHAR(100) NOT NULL,
-    document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
-    details JSONB DEFAULT '{}'::jsonb,
-    previous_hash VARCHAR(64),
-    current_hash VARCHAR(64)
-);
-
--- Indexes for fast query performance & search
-CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(owner_id);
-CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
-CREATE INDEX IF NOT EXISTS idx_grants_lookup ON document_grants(document_id, grantee_id);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_document ON audit_logs(document_id);
-
--- 5. Immutability Enforcement Trigger for Audit Logs
-CREATE OR REPLACE FUNCTION prevent_audit_log_alteration()
-RETURNS TRIGGER AS $$
-BEGIN
-    RAISE EXCEPTION 'TRUSTVAULT_SECURITY_VIOLATION: The audit_logs table is append-only. Modification (UPDATE) or deletion (DELETE) is strictly prohibited by security policy.'
-        USING ERRCODE = '55000'; -- Object not in prerequisite state / custom violation
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_prevent_audit_log_alteration ON audit_logs;
-
-CREATE TRIGGER trg_prevent_audit_log_alteration
-BEFORE UPDATE OR DELETE ON audit_logs
-FOR EACH ROW
-EXECUTE FUNCTION prevent_audit_log_alteration();
-```
+### 3. Security Flaws Caught & Mitigated
+* **JWT Algorithm Confusion Bypass:** AI verification omitted the `algorithms: ['HS256']` constraint, leaving endpoints vulnerable to `none` algorithm forging. Enforced strict cryptographic algorithm pinning.
+* **Weak Hashing Defaults:** AI generated sample code with low salt rounds (10). Upgraded to cost factor 12 with mandatory 8-character minimum password validation.
+* **Account Enumeration via Auth Discrepancies:** AI login handlers returned distinct messages (`"User not found"` vs `"Incorrect password"`). Unified into an identical generic response: `"Invalid email or password."`.
+* **Pipeline Crashes on Audit Failures:** AI audit implementations let unhandled database insert rejections crash the request pipeline. Wrapped audit writes in fail-safe blocks that preserve core request execution while alerting stderr.
 
 ---
 
-### 5. Architectural Verification & Conclusion
-* **Result:** Running `UPDATE audit_logs ...` or `DELETE FROM audit_logs ...` immediately fails with SQLSTATE `55000` and error message `TRUSTVAULT_SECURITY_VIOLATION`.
-* **Takeaway:** AI provides a functional baseline for standard database schemas, but lacks adversarial security instincts. Without manual human intervention to enforce database-level triggers, audit trails remain vulnerable to tampering.
+## Day 3: AES-256-GCM Envelope Encryption & Document Storage
+
+### 1. Objective
+Build in-memory authenticated envelope encryption (AES-256-GCM), RAM-only file ingestion, secure private cloud storage integration, and tenant-isolated document management endpoints.
+
+### 2. Key Architectural Decisions
+* **Envelope Encryption (`src/utils/crypto.js`):** Encrypts document buffers in RAM using AES-256-GCM with fresh 12-byte Initialization Vectors (IVs) and 128-bit authentication tags per operation.
+* **Atomic Storage Reference Coupling:** Persists ciphertext references as composite strings (`storagePath#iv:authTag`), guaranteeing that IVs and authentication tags travel atomically with file pointers.
+* **RAM-Only Ingestion (`src/middleware/upload.js`):** Configured `multer.memoryStorage()` with a hard 10MB ceiling; unencrypted plaintext buffers are never written to physical disk.
+* **Private Cloud Storage Integration (`src/services/storageService.js`):** Interfaces with private Supabase Storage buckets enforcing `upsert: false` to prevent ciphertext overwriting.
+* **Three-Gate Policy Enforcement (`src/controllers/documentController.js`):** Enforces access verification on every download: Gate 1 (`isOwner`), Gate 2 (`isAdmin`), or Gate 3 (active grant in `document_grants`).
+
+### 3. Security Flaws Caught & Mitigated
+* **Plaintext Spilling to Disk (Zero-Tolerance Violation):** AI upload boilerplates defaulted to `multer.diskStorage()` or temporary directories (`/tmp`). Replaced with RAM-only streaming buffers.
+* **Broken Object Level Authorization (BOLA):** AI download handlers served files by ID without ownership verification. Implemented the three-gate PEP check and logged unauthorized download attempts.
+* **Tenant Isolation Breaches in Listing:** AI list handlers accepted client-provided owner filters. Enforced server-side query scoping using `req.user.id` so non-admin users only receive owned or explicitly granted documents.
+* **Orphaned Storage Blobs:** AI code omitted transactional cleanup when database inserts failed after storage upload. Added automated rollback that deletes storage objects if metadata insertion fails.
 
 ---
 
-## Entry 2: Cryptographic Utilities & JWT Role Token Architecture
-* **Date:** 2026-10-20
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 2 — Phase 2.1: Cryptographic Utilities & JWT Token Manager
-* **Component:** `src/utils/password.js`, `src/utils/jwt.js`, `src/config/env.js`
+## Day 4: Grant Delegation Subsystem & Admin Forensic Inspection
 
-### 1. Context & User Prompt
-Implement cryptographic hashing (`bcryptjs`) and JWT token issuing/verifying utilities supporting `ADMIN`, `OWNER`, and `VIEWER` roles with strict environment checks.
+### 1. Objective
+Implement fine-grained document access delegation, immediate grant revocation without token latency, and an administrative security audit query endpoint.
 
-### 2. Common AI Security Flaws Caught & Mitigated
-1. **Unvalidated Claims in JWT Payload:**
-   * *Flaw:* AI often accepts any arbitrary object as payload, allowing caller injection or forged roles (e.g. `{ role: 'SUPERADMIN' }`).
-   * *Remediation:* Enforced strict claim verification in `generateToken`: `id`, `email`, and explicit validation against `VALID_ROLES` (`ADMIN`, `OWNER`, `VIEWER`).
-2. **Ambiguous Error Obfuscation:**
-   * *Flaw:* Generic `try/catch` blocks in AI-generated JWT modules often mask expiration as general invalidity or leak raw stack traces to callers.
-   * *Remediation:* Created structured `AuthTokenError` with discrete error codes (`TOKEN_EXPIRED`, `TOKEN_INVALID`, `TOKEN_MISSING`) and HTTP status 401.
-3. **Environment Misconfiguration Vulnerabilities:**
-   * *Flaw:* Using default fallback secrets in production environments.
-   * *Remediation:* `src/config/env.js` enforces a fatal throw if `JWT_SECRET` is unset in non-test runtime environments and issues security warnings if secret length is under 32 characters.
+### 2. Key Architectural Decisions
+* **Grant Delegation Service (`src/services/grantService.js`):** Enables document owners and administrators to delegate view permissions to registered users by email or user ID (`POST /api/grants`).
+* **Immediate Revocation Enforcement:** Deleting a grant (`DELETE /api/grants/:id`) immediately invalidates subsequent downloads at the PEP gate without waiting for token expirations or cached permissions.
+* **Administrative Audit Inspection (`src/services/auditService.js`, `/api/audit-logs`):** Enables admins to query, filter (by action, actorId, documentId, date bounds), and page through immutable audit logs with DoS-resistant limit clamping (max 100).
+* **Double-Layered Defense-in-Depth:** Route-level `requireRole(['ADMIN'])` paired with service-level caller role verification prevents unauthorized inspection attempts even if routing middleware is bypassed.
 
----
-
-## Entry 3: Policy Enforcement Point (PEP) & RBAC Authorization Middleware
-* **Date:** 2026-10-20
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 2 — Phase 2.2: PEP Authentication & RBAC Middleware with Audit Logging
-* **Component:** `src/utils/auditLogger.js`, `src/middleware/auth.js`, `src/middleware/rbac.js`
-
-### 1. Context & User Prompt
-Implement Policy Enforcement Point (PEP) middleware layers that intercept incoming HTTP requests, verify JWT signatures, enforce Role-Based Access Control (RBAC) across `ADMIN`, `OWNER`, and `VIEWER`, and synchronously record both unauthorized and forbidden access attempts into `audit_logs`.
-
-### 2. Common AI Security Flaws Caught & Mitigated
-1. **Unlogged Access Denials & Blind Rejections:**
-   * *Flaw:* Standard AI-generated middleware emits immediate `401` or `403` responses without forensic records. This leaves security administrators blind to brute-force token enumeration, token replay, or privilege escalation probes.
-   * *Remediation:* Every denial path (`UNAUTHORIZED_ACCESS_ATTEMPT`, `INVALID_TOKEN_ATTEMPT`, `FORBIDDEN_ROLE_ATTEMPT`) synchronously invokes `logAuditEvent()` before returning the response, capturing actor, IP, timestamp, and attempted roles.
-2. **Audit Failure Cascading to Pipeline Crash:**
-   * *Flaw:* AI often awaits database writes without error boundary containment. If the audit database experiences transient downtime or foreign key mismatches on untrusted actor UUIDs, an unhandled rejection crashes the API request pipeline.
-   * *Remediation:* `logAuditEvent()` wraps all persistence operations in safe boundaries, sanitizes UUIDs, and logs failures to `console.error` without halting the core request/response lifecycle.
-3. **Insecure Role Normalization & Type Confusion:**
-   * *Flaw:* AI frequently evaluates role checks via loose string equality or fails to assert the presence of `req.user`, causing unexpected `TypeError: Cannot read properties of undefined (reading 'role')` when unauthenticated users hit role-gated routes.
-   * *Remediation:* `requireRole()` normalizes single and multiple role parameters into strict arrays, safely evaluates `req.user`, and defaults unauthenticated actors to `'ANONYMOUS'` in forensic audit logs.
-
----
-
-## Entry 4: Auth Controllers, API Route Enforcement & Identity Inspection
-* **Date:** 2026-10-20
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 2 — Phase 2.3: Auth Controllers, API Routes & Integration Tests
-* **Component:** `src/controllers/authController.js`, `src/routes/authRoutes.js`, `src/server.js`
-
-### 1. Context & User Prompt
-Implement public and protected authentication controllers (`register`, `login`, `getMe`), map HTTP endpoints `/api/auth/register`, `/api/auth/login`, and `/api/auth/me`, and integrate into Express server with full audit trail logging.
-
-### 2. Common AI Security Flaws Caught & Mitigated
-1. **Password Hash Leakage in API Responses:**
-   * *Flaw:* Standard AI controllers often return the newly created user database row directly (`res.status(201).json(data)`), leaking the bcrypt `password_hash` over the wire.
-   * *Remediation:* Explicit column projections on insert (`.select('id, email, full_name, role, created_at')`) and payload sanitization guaranteeing `password_hash` is never serialized in the response.
-2. **User Account Enumeration via Differential Responses:**
-   * *Flaw:* AI routinely implements disparate error responses such as `"Email does not exist"` versus `"Incorrect password"`, allowing attackers to map valid target accounts during credential stuffing.
-   * *Remediation:* Both non-existent emails and incorrect passwords return a strictly identical generic error: `"Invalid email or password."` at HTTP status 401, while maintaining distinct internal audit actions (`LOGIN_FAILED_UNKNOWN_USER` vs. `LOGIN_FAILED_INVALID_PASSWORD`) for security monitoring.
-3. **Privilege Escalation via Unchecked Role Injection:**
-   * *Flaw:* AI models often accept unvalidated role strings from `req.body` directly into the database query, allowing arbitrary creation of `ADMIN` accounts.
-   * *Remediation:* Enforced validation against `VALID_ROLES` whitelist (`ADMIN`, `OWNER`, `VIEWER`) and safe defaulting to `VIEWER`.
-4. **Unhandled Database Constraint Crashes:**
-   * *Flaw:* AI commonly overlooks `full_name NOT NULL` constraints or crashes on unique email violation errors.
-   * *Remediation:* Added explicit email pre-flight check returning clean `409 Conflict` and dynamic fallback handling for `full_name`.
-
----
-
-## Entry 5: AES-256-GCM Envelope Encryption & Decryption Utilities
-* **Date:** 2026-10-21
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 3 — Phase 3.1: Document Encryption & Decryption Utilities
-* **Component:** `src/utils/crypto.js`, `src/config/env.js`, `tests/cryptoUtils.test.js`
-
-### 1. Context & User Prompt
-Implement in-memory cryptographic utilities for encrypting and decrypting document buffers using AES-256-GCM before object storage upload, with fresh 12-byte IV generation, 16-byte authentication tags, and strict key validation.
-
-### 2. Common AI Security Flaws Caught & Mitigated
-1. **Catastrophic IV Reuse in Galois/Counter Mode (GCM):**
-   * *Flaw:* AI models frequently generate static IVs, use predictable timestamps, or derive IVs deterministically from entity IDs. In AES-GCM, reusing an IV under the same key leads to catastrophic loss of confidentiality and enables complete forgery of authentication tags.
-   * *Remediation:* Generated isolated, cryptographically secure 12-byte (96-bit) random IVs via `crypto.randomBytes(12)` on each invocation of `encryptBuffer`. Validated uniqueness across repeated runs via automated tests.
-2. **Missing or Incomplete AEAD Authentication Tag Verification:**
-   * *Flaw:* AI often omits `decipher.setAuthTag()` or swallows decipher exceptions, essentially degrading GCM to unauthenticated stream cipher execution and exposing documents to padding/bit-flipping tampering.
-   * *Remediation:* Strictly verified the 16-byte authentication tag during decryption. Any tampering with ciphertext, auth tag, or IV triggers an immediate `CryptoError` (`DECRYPTION_FAILED`).
-3. **Key Material Entropy Reduction & Encoding Mismatches:**
-   * *Flaw:* AI frequently accepts arbitrary string passwords and passes them into `createCipheriv`, relying on silent OpenSSL truncation or padding which degrades 256-bit entropy.
-   * *Remediation:* Enforced exact 64-character hexadecimal format (32 bytes raw entropy) with startup fail-fast validation in `src/config/env.js`.
-4. **Buffer Boundary & Type Errors:**
-   * *Flaw:* Passing non-Buffer objects or empty buffers to crypto primitives causes unhandled runtime exceptions.
-   * *Remediation:* Rigorous type and length validation with distinct machine-readable error codes (`INVALID_INPUT`, `INVALID_IV`, `INVALID_AUTH_TAG`).
-
----
-
-## Entry 6: In-Memory File Ingestion & Private Cloud Storage Service
-* **Date:** 2026-10-21
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 3 — Phase 3.2: Storage Service & Encrypted File Ingestion Middleware
-* **Component:** `src/middleware/upload.js`, `src/services/storageService.js`, `tests/storageService.test.js`
-
-### 1. Context & User Prompt
-Implement RAM-only Multer file ingestion middleware with a strict 10MB limit and a dedicated storage service interacting securely with private Supabase Storage buckets (`vault-documents`).
-
-### 2. Common AI Security Flaws Caught & Mitigated
-1. **Unencrypted Plaintext Spilling to Disk (Zero-Tolerance Violation):**
-   * *Flaw:* Standard AI file-upload implementations default to `multer.diskStorage()` or default temp paths (e.g. `/tmp`), persisting plaintext document buffers to physical server storage before encryption takes place.
-   * *Remediation:* Configured strictly in-memory storage via `multer.memoryStorage()`. Documents exist solely within transient RAM buffers and are encrypted in-memory before leaving process memory.
-2. **Denial of Service via Unbounded File Buffers:**
-   * *Flaw:* AI models often leave file size limits unconfigured or allow multi-file bursts in memory, making server processes vulnerable to Out-Of-Memory (OOM) crashes via payload inflation attacks.
-   * *Remediation:* Configured a hard 10MB limit (`limits: { fileSize: 10 * 1024 * 1024, files: 1 }`) and wrapped Multer execution in an Express middleware that intercepts `LIMIT_FILE_SIZE` and returns a clean HTTP 400 error.
-3. **Storage Collision & Ciphertext Overwrites:**
-   * *Flaw:* AI often sets `upsert: true` on storage API calls, allowing attackers or concurrent requests to silently overwrite existing encrypted files.
-   * *Remediation:* Enforced `upsert: false` on `uploadEncryptedDocument()` to guarantee immutability of stored objects.
-4. **Stream & Blob Type Mismatches in Node Runtimes:**
-   * *Flaw:* AI models often pass web `Blob` objects returned by `@supabase/supabase-js` directly into cryptographic decipher methods expecting Node `Buffer` instances, resulting in unhandled type exceptions.
-   * *Remediation:* Explicitly converted downloaded Blobs to Node `Buffer` instances using `Buffer.from(await data.arrayBuffer())`.
-
----
-
-## Entry 7: Document Controllers, PEP Access Enforcement & API Route Authorization
-* **Date:** 2026-10-21
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 3 — Phase 3.3: Document Controllers, PEP Authorization & Route Wiring
-* **Component:** `src/controllers/documentController.js`, `src/routes/documentRoutes.js`, `src/server.js`, `tests/documentRoutes.test.js`
-
-### 1. Context & User Prompt
-Implement four document controller operations (`uploadDocument`, `downloadDocument`, `listDocuments`, `deleteDocument`), wire PEP authorization middleware on all document routes, and validate all access-control invariants with a 13-test integration suite covering BOLA, unauthorized access attempts, tenant isolation, and download-decrypt pipeline integrity.
-
-### 2. Common AI Security Flaws Caught & Mitigated
-1. **Object-Level Authorization Bypass (BOLA) — AI Omission:**
-   * *Flaw:* AI-generated download handlers often fetch documents by ID and stream them without performing a live authorization check. A user with a guessed or leaked document UUID can download any document from any other tenant.
-   * *Remediation:* Implemented a three-gate Policy Enforcement Point inside `downloadDocument`: (1) Confirm `isOwner` (`req.user.id === document.owner_id`), (2) confirm `isAdmin` (`req.user.role === 'ADMIN'`), and only if both are false (3) query `document_grants` to confirm a live READ grant exists. Unauthorized attempts log `UNAUTHORIZED_DOCUMENT_DOWNLOAD_ATTEMPT` with DENIED status before returning `403 Forbidden`.
-
-2. **Insecure Tenant Isolation in List Queries (Broken Object Property Level Auth):**
-   * *Flaw:* AI list-documents handlers frequently return all rows from the `documents` table with a client-controllable filter parameter (e.g., `?owner=...`), trusting the client to scope its own results. This exposes the full document inventory of every tenant to any authenticated user.
-   * *Remediation:* Server-side query composition enforces strict tenant scoping: non-ADMIN users receive only `owner_id.eq.{user.id}` results, or rows explicitly present in their `document_grants`. The query filter is entirely constructed on the server from `req.user` — no client-supplied filters accepted.
-
-3. **AES-GCM Ciphertext Envelope Coupling — AI Architectural Gap:**
-   * *Flaw:* AI-generated storage services often store IV and auth tag in a separate database column, creating a coupling risk where a column drop or migration silently discards the decryption material, permanently corrupting all stored documents.
-   * *Remediation:* Composite envelope string `storagePath#iv:authTag` is stored in a single `storage_path` TEXT column, ensuring IV and authentication tag travel atomically with the storage path reference and cannot be accidentally dissociated.
-
-4. **Orphaned Storage Objects on Database Insert Failure:**
-   * *Flaw:* AI implementations that separate storage upload from database insert (two discrete async calls) leave orphaned encrypted blobs in the private bucket when the database insert fails, leaking storage budget and creating unreachable objects.
-   * *Remediation:* Implemented a transactional rollback pattern: if `supabase.from('documents').insert()` fails after the blob is uploaded, an immediate `deleteDocumentFromStorage()` call is invoked inside the error handler to clean up the orphaned object before returning the error to the caller.
-
-5. **Missing Audit Trail for Delete Operations:**
-   * *Flaw:* AI delete controllers often return a success response without writing to the audit trail, leaving no forensic record of which admin or owner deleted which document and when.
-   * *Remediation:* `deleteDocument` performs storage removal, database deletion, then synchronously logs `DOCUMENT_DELETED` with the document ID, title, owner, and actor IP to `audit_logs`. Unauthorized delete attempts log `UNAUTHORIZED_DOCUMENT_DELETE_ATTEMPT` with DENIED status.
-
----
-
-## Entry 8: Document Grant Delegation Service & Revocation Controller
-* **Date:** 2026-10-22
-* **Developer/Engineer:** Lead Security Software Engineer
-* **Phase:** Day 4 — Phase 4.1: Grant Delegation Service, Controller & Immediate Revocation Enforcement
-* **Component:** `src/services/grantService.js`, `src/controllers/grantController.js`, `src/routes/grantRoutes.js`, `tests/grantRoutes.test.js`
-
-### 1. Context & User Prompt
-Build fine-grained document sharing and revocation utilities allowing document owners (or admins) to delegate view access to other registered users by email or user ID, list active grants with grantee identities, and immediately revoke access with synchronous audit logging.
-
-### 2. Common AI Security Flaws Caught & Mitigated
-1. **Broken Object Level Authorization on Grant Creation (BOLA / Privilege Escalation):**
-   * *Flaw:* AI implementations often accept a `documentId` and `granteeEmail` from request bodies without verifying that the caller is the actual document owner or a privileged administrator. Any authenticated user could grant themselves or conspirators access to any document in the system.
-   * *Remediation:* Enforced a server-side ownership check before insertion: verified `document.owner_id === grantedByUserId` or `grantedByUserRole === 'ADMIN'`, returning `403 Forbidden` and logging `UNAUTHORIZED_GRANT_CREATION_ATTEMPT` with `DENIED` status upon breach attempts.
-
-2. **Self-Granting Invariant Violation:**
-   * *Flaw:* AI code rarely checks if the grantee is identical to the grantor. Document owners could create redundant grants to themselves, polluting `document_grants` table state and confusing access audit logs.
-   * *Remediation:* Explicitly enforced `grantee.id === grantedByUserId` validation returning `400 Bad Request` (`Cannot grant document access to yourself.`).
-
-3. **Insecure Grant Revocation (Unauthorized Revocation by Third Parties):**
-   * *Flaw:* AI DELETE handlers typically delete grants strictly by grant ID without verifying who owns the document or created the grant. An attacker who enumerates grant UUIDs could disrupt legitimate access across tenants.
-   * *Remediation:* Verified that the revoker is either the document owner, the grant creator, or an `ADMIN`. Unauthorized revocation attempts return `403 Forbidden` and log `UNAUTHORIZED_GRANT_REVOCATION_ATTEMPT`.
-
-4. **Schema Column Discrepancy & Blind Overwrite:**
-   * *Flaw:* AI generated models frequently attempt to blindly write unmapped columns (`granted_to`, `expires_at`) into database tables without verifying PostgREST schema constraints, causing database transaction errors or silent failures.
-   * *Remediation:* Reconciled schema differences: mapped grantee identity to `grantee_id` foreign key, stored grantor in `granted_by`, and recorded optional metadata (`expires_at`) within tamper-evident audit logs while returning clean unified DTOs.
-
-
-
-
-
-
+### 3. Security Flaws Caught & Mitigated
+* **Privilege Escalation on Grant Delegation:** AI implementations accepted `documentId` without verifying that the caller owned the document or held admin rights. Enforced server-side ownership checks returning `403 Forbidden`.
+* **Self-Granting Invariant Violation:** AI code allowed users to grant documents to themselves. Implemented explicit validation rejecting self-delegation with `400 Bad Request`.
+* **Unauthorized Grant Revocation:** AI DELETE handlers allowed any authenticated user to revoke any grant by ID. Restricted revocation authority strictly to document owners, grant creators, or admins.
+* **Database Schema Column Hallucinations:** AI code assumed standard Prisma/Rails conventions (`created_at`, `granted_to`). Reconciled against PostgreSQL schema constraints (`timestamp`, `grantee_id`), mapped clean API aliases, and validated UUID inputs against RFC 4122.

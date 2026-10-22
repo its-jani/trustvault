@@ -299,6 +299,35 @@ Implement four document controller operations (`uploadDocument`, `downloadDocume
    * *Flaw:* AI delete controllers often return a success response without writing to the audit trail, leaving no forensic record of which admin or owner deleted which document and when.
    * *Remediation:* `deleteDocument` performs storage removal, database deletion, then synchronously logs `DOCUMENT_DELETED` with the document ID, title, owner, and actor IP to `audit_logs`. Unauthorized delete attempts log `UNAUTHORIZED_DOCUMENT_DELETE_ATTEMPT` with DENIED status.
 
+---
+
+## Entry 8: Document Grant Delegation Service & Revocation Controller
+* **Date:** 2026-10-22
+* **Developer/Engineer:** Lead Security Software Engineer
+* **Phase:** Day 4 — Phase 4.1: Grant Delegation Service, Controller & Immediate Revocation Enforcement
+* **Component:** `src/services/grantService.js`, `src/controllers/grantController.js`, `src/routes/grantRoutes.js`, `tests/grantRoutes.test.js`
+
+### 1. Context & User Prompt
+Build fine-grained document sharing and revocation utilities allowing document owners (or admins) to delegate view access to other registered users by email or user ID, list active grants with grantee identities, and immediately revoke access with synchronous audit logging.
+
+### 2. Common AI Security Flaws Caught & Mitigated
+1. **Broken Object Level Authorization on Grant Creation (BOLA / Privilege Escalation):**
+   * *Flaw:* AI implementations often accept a `documentId` and `granteeEmail` from request bodies without verifying that the caller is the actual document owner or a privileged administrator. Any authenticated user could grant themselves or conspirators access to any document in the system.
+   * *Remediation:* Enforced a server-side ownership check before insertion: verified `document.owner_id === grantedByUserId` or `grantedByUserRole === 'ADMIN'`, returning `403 Forbidden` and logging `UNAUTHORIZED_GRANT_CREATION_ATTEMPT` with `DENIED` status upon breach attempts.
+
+2. **Self-Granting Invariant Violation:**
+   * *Flaw:* AI code rarely checks if the grantee is identical to the grantor. Document owners could create redundant grants to themselves, polluting `document_grants` table state and confusing access audit logs.
+   * *Remediation:* Explicitly enforced `grantee.id === grantedByUserId` validation returning `400 Bad Request` (`Cannot grant document access to yourself.`).
+
+3. **Insecure Grant Revocation (Unauthorized Revocation by Third Parties):**
+   * *Flaw:* AI DELETE handlers typically delete grants strictly by grant ID without verifying who owns the document or created the grant. An attacker who enumerates grant UUIDs could disrupt legitimate access across tenants.
+   * *Remediation:* Verified that the revoker is either the document owner, the grant creator, or an `ADMIN`. Unauthorized revocation attempts return `403 Forbidden` and log `UNAUTHORIZED_GRANT_REVOCATION_ATTEMPT`.
+
+4. **Schema Column Discrepancy & Blind Overwrite:**
+   * *Flaw:* AI generated models frequently attempt to blindly write unmapped columns (`granted_to`, `expires_at`) into database tables without verifying PostgREST schema constraints, causing database transaction errors or silent failures.
+   * *Remediation:* Reconciled schema differences: mapped grantee identity to `grantee_id` foreign key, stored grantor in `granted_by`, and recorded optional metadata (`expires_at`) within tamper-evident audit logs while returning clean unified DTOs.
+
+
 
 
 

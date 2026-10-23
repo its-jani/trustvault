@@ -118,3 +118,23 @@ Scaffold the modern React 19 SPA foundation with Vite, Tailwind CSS v4, and shad
 * **401 Token Drift & Session Desync:** Expired or revoked JWT tokens left lingering in `localStorage` caused broken API states. Built a unified 401 response interceptor in the API client to evict tokens and force immediate clean redirection to `/login`.
 * **Credential Invalidation on Registration:** Standard scaffolds log users in automatically without storing tokens or fail to normalize response envelopes. Standardized `login()` and `register()` flows to synchronize both `localStorage` and React context state atomically.
 
+---
+
+## Day 5 - Phase 5.3: Document Vault UI, Encrypted Stream Downloader, Grants Modal & Audit Viewer
+
+### 1. Objective
+Complete the zero-trust Document Vault frontend interface, interactive RAM dropzone upload modal with live cryptographic pipeline telemetry, secure decrypted binary stream downloader, fine-grained access delegation modal with immediate revocation, and administrative forensic audit inspector.
+
+### 2. Key Architectural Decisions
+* **RAM Ingestion Dropzone (`src/components/UploadModal.jsx`):** Interactive drag-and-drop modal with strict 10MB perimeter enforcement, security classification tags, and live AES-256-GCM cipher telemetry (`idle` -> `encrypting` in RAM -> `uploading` ciphertext -> `success`).
+* **Encrypted Stream Downloader (`src/api/documents.js`):** Interacts with `GET /api/documents/:id/download`, retrieves authenticated binary buffers, instantiates ephemeral browser blob object URLs, triggers download, and immediately revokes the object URL after execution to prevent browser memory leaks.
+* **Instant Revocation Grant Drawer (`src/components/GrantModal.jsx`):** Allows document owners and administrators to query active grants (`GET /api/grants/document/:id`), delegate view permissions by email (`POST /api/grants`), and execute immediate PEP revocation (`DELETE /api/grants/:id`) with zero cache lag.
+* **Forensic Audit Inspector (`src/components/AuditLogViewer.jsx`):** Administrative inspection console with action-type dropdown filtering, actor UUID filtering, date bounds, pagination, and expandable formatted JSON viewers for tamper-evident audit records.
+* **Integrated Vault Control Center (`src/pages/Dashboard.jsx`):** Unified navigation supporting live search, category filtering, ownership tags, responsive cards grid, and dynamic role-based tab switching for admins.
+
+### 3. Security Flaws Caught & Mitigated
+* **Object URL Memory Leaks:** Standard web implementations create persistent blob URLs via `URL.createObjectURL()` that remain pinned in browser memory until page unload. Implemented explicit lifecycle cleanup (`setTimeout(() => URL.revokeObjectURL(url), 1000)`).
+* **Cross-Role Action Exposure:** Prevented unprivileged users (`VIEWER`) from accessing grant delegation or document deletion controls by enforcing caller ownership (`doc.owner_id === user.id`) and admin role gates before rendering management triggers.
+* **Client-Side File Size Bypass:** Enforced strict 10MB file size checks directly within the drag-and-drop ingestion handler before any FormData serialization or upload attempt, saving server bandwidth and preventing 413 payload rejections.
+
+

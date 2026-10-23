@@ -95,3 +95,26 @@ Implement perimeter rate limiting to neutralize brute-force/credential-stuffing 
 * **Authentication Brute-Force & Bcrypt CPU Starvation:** AI endpoints lacked rate limiting, allowing attackers to submit uncontrolled login requests to exhaust server CPU on cost-factor 12 hashing. Throttled auth endpoints with 429 status enforcement.
 * **Test Isolation Degradation:** Naive rate limiters apply global in-memory counters that throttle integration test suites running rapid registration cycles. Engineered test-aware bypass triggers (`x-test-rate-limit`) preserving strict production enforcement without test interference.
 * **Stored XSS & Null Byte Truncation:** AI controllers assumed incoming JSON strings were clean. Added recursive sanitization to strip script blocks and null bytes before downstream database ingestion.
+
+---
+
+## Day 5 - Phase 5.2: React 19 Frontend Scaffolding, Impeccable Design Rules, Auth UI & JWT State
+
+### 1. Objective
+Scaffold the modern React 19 SPA foundation with Vite, Tailwind CSS v4, and shadcn/ui-inspired primitives adhering to impeccable, craft-grade UI/UX standards without generic AI aesthetics. Build secure JWT state management, session rehydration, and high-fidelity authentication views (`/login`, `/register`).
+
+### 2. Key Architectural Decisions
+* **Tech Stack & Tooling (`client/`):** React 19 SPA bootstrapped via Vite 6, styled with Tailwind CSS v4 (`@tailwindcss/vite`), `lucide-react`, `clsx`, `tailwind-merge`, and `framer-motion` for micro-animations.
+* **Craft-Grade Design System:** Sleek slate/zinc dark theme (`bg-slate-950`, `border-slate-800`, `text-slate-100`) with high-contrast emerald/indigo security accents, glassmorphic surfaces (`backdrop-blur-md bg-slate-900/80`), and interactive feedback states (`active:scale-[0.98]`).
+* **Universal API Client (`src/api/client.js`):** Unified fetch wrapper pointing to `VITE_API_BASE_URL` (`http://localhost:5000/api`), auto-attaching `Bearer <token>` from `localStorage` with a 401 response interceptor evicting stale tokens and redirecting to `/login?expired=true`.
+* **Stateful Auth Context (`src/context/AuthContext.jsx`):** Exposes `user`, `token`, `isAuthenticated`, `isLoading`, `login`, `register`, and `logout`. Executes `GET /api/auth/me` on initial load to verify and rehydrate active session claims safely without client-side privilege assumptions.
+* **High-Craft Auth Screens:**
+  * **Login View (`/login`):** Split-column security branding layout with live form validation, password visibility toggles, loading spinners, and inline error alerts.
+  * **Register View (`/register`):** Full name, email, password, and interactive role badge selection cards (`VIEWER`, `OWNER`, `ADMIN`) with contextual permission descriptions.
+  * **Protected Route Guard (`ProtectedRoute.jsx`):** Guard checking authentication state with pulse skeletons before rendering children and role-mismatch rejection screens.
+
+### 3. Security Flaws Caught & Mitigated
+* **Client-Side Role Tampering:** AI frontend architectures often trust role claims cached in browser storage for administrative features. Enforced immediate `GET /api/auth/me` token re-verification on load, ensuring all authorization authority remains server-enforced.
+* **401 Token Drift & Session Desync:** Expired or revoked JWT tokens left lingering in `localStorage` caused broken API states. Built a unified 401 response interceptor in the API client to evict tokens and force immediate clean redirection to `/login`.
+* **Credential Invalidation on Registration:** Standard scaffolds log users in automatically without storing tokens or fail to normalize response envelopes. Standardized `login()` and `register()` flows to synchronize both `localStorage` and React context state atomically.
+

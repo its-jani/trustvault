@@ -45,8 +45,8 @@ trustvault/
 ├── .gitignore                 # Secrets, logs, and dependency ignore rules
 ├── package.json               # Dependencies and scripts (ES Modules)
 ├── README.md                  # Project overview and runbook
-├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (Days 1–4)
-├── THREATS.md                 # STRIDE threat model & attack vector register (TV-01 → TV-12)
+├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (Days 1–5)
+├── THREATS.md                 # STRIDE threat model & attack vector register (TV-01 → TV-15)
 ├── tests/
 │   ├── authUtils.test.js      # Password & JWT cryptographic unit tests (10 tests)
 │   ├── middleware.test.js     # PEP authentication & RBAC middleware tests (11 tests)
@@ -55,7 +55,8 @@ trustvault/
 │   ├── storageService.test.js # Multer ingestion & storage service tests (6 tests)
 │   ├── documentRoutes.test.js # Document API PEP access enforcement tests (13 tests)
 │   ├── grantRoutes.test.js    # Grant delegation & immediate revocation PEP tests (14 tests)
-│   └── auditRoutes.test.js    # Admin audit query, filtering & RBAC tests (11 tests)
+│   ├── auditRoutes.test.js    # Admin audit query, filtering & RBAC tests (11 tests)
+│   └── rateLimiter.test.js    # Rate limiting, health check & sanitization tests (4 tests)
 └── src/
     ├── config/
     │   ├── env.js             # Validated environment configurations (JWT, AES, Supabase)
@@ -70,7 +71,9 @@ trustvault/
     │   ├── auth.js            # PEP Bearer JWT authentication & audit logger
     │   ├── errorHandler.js    # Centralized Express error handler (no stack leaks in prod)
     │   ├── rbac.js            # Policy Enforcement Point RBAC authorization
-    │   └── upload.js          # In-memory Multer middleware (RAM-only, 10MB limit)
+    │   ├── upload.js          # In-memory Multer middleware (RAM-only, 10MB limit)
+    │   ├── rateLimiter.js     # Perimeter defense & auth brute-force rate limiters (429)
+    │   └── validator.js       # Global recursive HTML/script & null byte input sanitization
     ├── routes/
     │   ├── authRoutes.js      # Public/protected auth route definitions
     │   ├── documentRoutes.js  # PEP-protected document route definitions
@@ -363,13 +366,34 @@ All grant and audit endpoints require `Authorization: Bearer <token>` header.
 
 ---
 
-## 9. Running the Test Suite
+## 9. Health & Perimeter Defense Endpoints (Day 5)
+
+### 1. Public Health Probe
+* **Endpoint:** `GET /health`
+* **Access:** Public (no authentication required)
+* **Response (`200 OK`):**
+  ```json
+  {
+    "status": "healthy",
+    "timestamp": "2026-10-23T04:20:00.000Z",
+    "uptime": 45.67
+  }
+  ```
+
+### 2. Rate Limiting Protection
+* **Auth Rate Limiting:** Applied to `/api/auth/login` and `/api/auth/register`. Caps traffic to **10 requests per 15 minutes** per IP. Exceeding attempts triggers HTTP `429 Too Many Requests`.
+* **Global Rate Limiting:** Applied to all `/api/*` endpoints. Caps traffic to **200 requests per 15 minutes** per IP.
+* **Input Sanitization:** Automatically strips script injection tags (`<script>`), null bytes (`\0`), HTML tags, and `javascript:` pseudo-protocols across all request bodies, query strings, and URL parameters.
+
+---
+
+## 10. Running the Test Suite
 
 ```bash
 npm test
 ```
 
-**Total: 86 automated tests across 8 suites (100% passing):**
+**Total: 90 automated tests across 9 suites (100% passing):**
 | Suite | Tests | Coverage |
 |---|---|---|
 | `authUtils.test.js` | 10 | bcrypt hashing, JWT sign/verify, token error codes |
@@ -380,10 +404,11 @@ npm test
 | `documentRoutes.test.js` | 13 | BOLA prevention, tenant isolation, upload/download/delete PEP |
 | `grantRoutes.test.js` | 14 | Grant delegation, instant revocation PEP check, non-owner blocking, self-grant rejection |
 | `auditRoutes.test.js` | 11 | Admin-only RBAC, limit clamping, action/actor/date filtering, malformed parameter handling |
+| `rateLimiter.test.js` | 4 | Public /health probe, input sanitization, 429 rate limit enforcement |
 
 ---
 
-## 10. Security Documentation
+## 11. Security Documentation
 
-* [`PROMPTS.md`](./PROMPTS.md): AI interaction audit log across Days 1–4, documenting AI-generated security flaws and corrective human engineering.
-* [`THREATS.md`](./THREATS.md): STRIDE + OWASP API 2023 threat register — 12 threat vectors (TV-01 to TV-12) covering audit immutability, BOLA, path traversal, JWT forgery, credential stuffing, AES-GCM misuse, malicious file uploads, delegation BOLA, self-granting, and audit log DoS/inspection.
+* [`PROMPTS.md`](./PROMPTS.md): AI interaction audit log across Days 1–5, documenting AI-generated security flaws and corrective human engineering.
+* [`THREATS.md`](./THREATS.md): STRIDE + OWASP API 2023 threat register — 15 threat vectors (TV-01 to TV-15) covering audit immutability, BOLA, path traversal, JWT forgery, credential stuffing, AES-GCM misuse, malicious file uploads, delegation BOLA, self-granting, audit log DoS, brute-force rate limiting, and input sanitization.

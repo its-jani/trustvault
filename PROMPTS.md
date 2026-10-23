@@ -77,3 +77,21 @@ Implement fine-grained document access delegation, immediate grant revocation wi
 * **Self-Granting Invariant Violation:** AI code allowed users to grant documents to themselves. Implemented explicit validation rejecting self-delegation with `400 Bad Request`.
 * **Unauthorized Grant Revocation:** AI DELETE handlers allowed any authenticated user to revoke any grant by ID. Restricted revocation authority strictly to document owners, grant creators, or admins.
 * **Database Schema Column Hallucinations:** AI code assumed standard Prisma/Rails conventions (`created_at`, `granted_to`). Reconciled against PostgreSQL schema constraints (`timestamp`, `grantee_id`), mapped clean API aliases, and validated UUID inputs against RFC 4122.
+
+---
+
+## Day 5: Final Backend Hardening, Rate Limiting & Input Sanitization
+
+### 1. Objective
+Implement perimeter rate limiting to neutralize brute-force/credential-stuffing attacks, add recursive input sanitization, expose a public health check probe, and configure cross-origin security headers for frontend integration.
+
+### 2. Key Architectural Decisions
+* **Perimeter Rate Limiting (`src/middleware/rateLimiter.js`):** Applied `express-rate-limit` to sensitive auth routes (`/api/auth/login`, `/api/auth/register`) with a 10 req / 15-minute cap (HTTP `429 Too Many Requests`), alongside a global 200 req / 15-minute cap across `/api/*`.
+* **Recursive Input Sanitization (`src/middleware/validator.js`):** Recursively inspects and cleans `req.body`, `req.query`, and `req.params`, stripping null bytes, script tags, HTML elements, and `javascript:` pseudo-protocols.
+* **Public Health Probe (`GET /health`):** Lightweight liveness probe reporting `{ status: 'healthy', timestamp, uptime }` without requiring authentication.
+* **Cross-Origin Security Hardening (`src/server.js`):** Adjusted Helmet policies (`crossOriginResourcePolicy: 'cross-origin'`, `crossOriginEmbedderPolicy: false`) enabling seamless, secure SPA frontend integration.
+
+### 3. Security Flaws Caught & Mitigated
+* **Authentication Brute-Force & Bcrypt CPU Starvation:** AI endpoints lacked rate limiting, allowing attackers to submit uncontrolled login requests to exhaust server CPU on cost-factor 12 hashing. Throttled auth endpoints with 429 status enforcement.
+* **Test Isolation Degradation:** Naive rate limiters apply global in-memory counters that throttle integration test suites running rapid registration cycles. Engineered test-aware bypass triggers (`x-test-rate-limit`) preserving strict production enforcement without test interference.
+* **Stored XSS & Null Byte Truncation:** AI controllers assumed incoming JSON strings were clean. Added recursive sanitization to strip script blocks and null bytes before downstream database ingestion.

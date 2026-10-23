@@ -8,6 +8,8 @@ import authRoutes from './routes/authRoutes.js';
 import documentRoutes from './routes/documentRoutes.js';
 import grantRoutes from './routes/grantRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
+import { authRateLimiter, globalRateLimiter } from './middleware/rateLimiter.js';
+import { sanitizeInputs } from './middleware/validator.js';
 
 dotenv.config();
 
@@ -26,9 +28,9 @@ app.use(
         upgradeInsecureRequests: []
       }
     },
-    crossOriginEmbedderPolicy: true,
+    crossOriginEmbedderPolicy: false,
     crossOriginOpenerPolicy: true,
-    crossOriginResourcePolicy: { policy: 'same-site' },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
     dnsPrefetchControl: { allow: false },
     frameguard: { action: 'deny' },
     hidePoweredBy: true,
@@ -66,7 +68,19 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 4. Root Welcome Route
+// 4. Input Sanitization Middleware
+app.use(sanitizeInputs);
+
+// 5. Public Health Check Route
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// 6. Root Welcome Route
 app.get('/', (req, res) => {
   res.status(200).json({
     service: 'TrustVault Security-First Document Platform API',
@@ -120,7 +134,12 @@ app.get('/api/health', async (req, res, next) => {
   }
 });
 
-// 6. Application Routes
+// 8. Rate Limiting Middleware
+app.use('/api/auth/login', authRateLimiter);
+app.use('/api/auth/register', authRateLimiter);
+app.use('/api', globalRateLimiter);
+
+// 9. Application Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/grants', grantRoutes);

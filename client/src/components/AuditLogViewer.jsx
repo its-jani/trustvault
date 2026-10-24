@@ -266,7 +266,22 @@ export function AuditLogViewer() {
 
                     // Map values checking top-level columns and JSONB details fallback
                     const status = log.status || log.details?.status || 'SUCCESS';
-                    const actor = log.actor_id || log.user_id || log.details?.actor_id || 'System';
+                    const actorId = log.actor_id || log.user_id || log.details?.actor_id || null;
+                    const actorName = log.actor_name || log.users?.full_name || log.details?.actor_name || null;
+                    const actorEmail = log.actor_email || log.users?.email || log.details?.email || log.details?.actor_email || null;
+
+                    let actorDisplay = 'System';
+                    if (actorName && actorEmail) {
+                      actorDisplay = `${actorName} (${actorEmail})`;
+                    } else if (actorEmail) {
+                      actorDisplay = actorEmail;
+                    } else if (actorName) {
+                      actorDisplay = actorName;
+                    } else if (actorId) {
+                      actorDisplay = `${actorId.slice(0, 8)}...`;
+                    }
+
+                    const truncatedActorId = actorId ? `${actorId.slice(0, 8)}...` : null;
                     const ip = log.ip_address || log.details?.ipAddress || '-';
                     const resource = log.document_id || log.details?.resource || log.details?.documentId || '-';
 
@@ -282,8 +297,20 @@ export function AuditLogViewer() {
                           <td className="py-3 px-4 text-indigo-300 font-sans font-semibold whitespace-nowrap">
                             {log.action}
                           </td>
-                          <td className="py-3 px-4 text-slate-400 whitespace-nowrap text-[11px]" title={actor}>
-                            {actor !== 'System' ? `${actor.slice(0, 8)}...` : 'System'}
+                          <td className="py-3 px-4 text-slate-300 whitespace-nowrap text-[11px]">
+                            <div className="flex items-center gap-1.5" title={actorId ? `Actor UUID: ${actorId}` : 'System generated'}>
+                              <span className="font-sans font-medium text-slate-200">
+                                {actorDisplay}
+                              </span>
+                              {truncatedActorId && (actorName || actorEmail) && (
+                                <Badge
+                                  variant="outline"
+                                  className="font-mono text-[9px] px-1 py-0 text-slate-400 bg-slate-900 border-slate-700/60"
+                                >
+                                  {truncatedActorId}
+                                </Badge>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-slate-400 whitespace-nowrap text-[11px]" title={resource}>
                             {resource !== '-' ? `${resource.slice(0, 8)}...` : '-'}
@@ -322,10 +349,12 @@ export function AuditLogViewer() {
                                     {
                                       id: log.id,
                                       action: log.action,
-                                      status: log.status,
-                                      user_id: log.user_id,
-                                      resource: log.resource,
-                                      ip_address: log.ip_address,
+                                      status: status,
+                                      actor_id: actorId,
+                                      actor_name: actorName,
+                                      actor_email: actorEmail,
+                                      resource: resource,
+                                      ip_address: ip,
                                       timestamp: log.timestamp || log.created_at,
                                       details: log.details
                                     },

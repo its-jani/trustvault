@@ -50,7 +50,7 @@ export async function queryAuditLogs({
   // 3. Query construction with count
   let query = supabase
     .from('audit_logs')
-    .select('id, timestamp, actor_id, action, document_id, details, previous_hash, current_hash', { count: 'exact' });
+    .select('id, timestamp, actor_id, action, document_id, details, previous_hash, current_hash, users:actor_id(full_name, email)', { count: 'exact' });
 
   if (action && typeof action === 'string' && action.trim()) {
     query = query.eq('action', action.trim());
@@ -87,9 +87,11 @@ export async function queryAuditLogs({
   const totalRecords = count || 0;
   const totalPages = Math.ceil(totalRecords / parsedLimit);
 
-  // Map timestamp to created_at alias for downstream compatibility
+  // Map timestamp and attach joined user metadata (actor_name, actor_email)
   const normalizedLogs = (logs || []).map((log) => ({
     ...log,
+    actor_name: log.users?.full_name || null,
+    actor_email: log.users?.email || null,
     created_at: log.timestamp
   }));
 

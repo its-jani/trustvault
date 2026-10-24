@@ -27,7 +27,7 @@ export async function fetchDocumentGrants(documentId) {
  * @param {string} [params.expiresAt] - Optional ISO expiration date
  * @returns {Promise<Object>} Created grant object
  */
-export async function createGrant({ documentId, granteeEmail, granteeId, permission = 'VIEW', expiresAt }) {
+export async function createGrant({ documentId, granteeEmail, granteeId, permission = 'READ', expiresAt }) {
   const response = await apiClient('/grants', {
     method: 'POST',
     body: JSON.stringify({

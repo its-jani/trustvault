@@ -264,6 +264,12 @@ export function AuditLogViewer() {
                       ? new Date(log.created_at || log.timestamp).toLocaleString()
                       : '-';
 
+                    // Map values checking top-level columns and JSONB details fallback
+                    const status = log.status || log.details?.status || 'SUCCESS';
+                    const actor = log.actor_id || log.user_id || log.details?.actor_id || 'System';
+                    const ip = log.ip_address || log.details?.ipAddress || '-';
+                    const resource = log.document_id || log.details?.resource || log.details?.documentId || '-';
+
                     return (
                       <React.Fragment key={log.id}>
                         <tr className="hover:bg-slate-900/50 transition-colors">
@@ -271,19 +277,19 @@ export function AuditLogViewer() {
                             {dateFormatted}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
-                            {getStatusBadge(log.status)}
+                            {getStatusBadge(status)}
                           </td>
                           <td className="py-3 px-4 text-indigo-300 font-sans font-semibold whitespace-nowrap">
                             {log.action}
                           </td>
-                          <td className="py-3 px-4 text-slate-400 whitespace-nowrap text-[11px]" title={log.user_id}>
-                            {log.user_id ? `${log.user_id.slice(0, 8)}...` : 'System'}
+                          <td className="py-3 px-4 text-slate-400 whitespace-nowrap text-[11px]" title={actor}>
+                            {actor !== 'System' ? `${actor.slice(0, 8)}...` : 'System'}
                           </td>
-                          <td className="py-3 px-4 text-slate-400 whitespace-nowrap text-[11px]" title={log.resource}>
-                            {log.resource ? `${log.resource.slice(0, 8)}...` : '-'}
+                          <td className="py-3 px-4 text-slate-400 whitespace-nowrap text-[11px]" title={resource}>
+                            {resource !== '-' ? `${resource.slice(0, 8)}...` : '-'}
                           </td>
                           <td className="py-3 px-4 text-slate-500 whitespace-nowrap text-[11px]">
-                            {log.ip_address || '-'}
+                            {ip}
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
                             <button

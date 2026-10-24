@@ -11,7 +11,7 @@ import { fetchDocumentGrants, createGrant, revokeGrant } from '../api/grants';
 export function GrantModal({ isOpen, onClose, document: doc }) {
   const [grants, setGrants] = useState([]);
   const [granteeEmail, setGranteeEmail] = useState('');
-  const [permission, setPermission] = useState('VIEW');
+  const [permission, setPermission] = useState('READ');
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [revokingId, setRevokingId] = useState(null);
@@ -142,7 +142,7 @@ export function GrantModal({ isOpen, onClose, document: doc }) {
                 disabled={isSubmitting}
                 className="w-full h-10 px-3 rounded-lg bg-slate-900 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
               >
-                <option value="VIEW">VIEW (Read-only)</option>
+                <option value="READ">VIEW (Read-only)</option>
               </select>
             </div>
           </div>
@@ -197,7 +197,7 @@ export function GrantModal({ isOpen, onClose, document: doc }) {
                           {granteeDisplay}
                         </span>
                         <Badge variant="outline" className="text-[10px] py-0">
-                          {grant.permission || 'VIEW'}
+                          {grant.permission || 'READ'}
                         </Badge>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5">

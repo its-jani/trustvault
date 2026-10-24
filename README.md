@@ -1,70 +1,96 @@
-# TrustVault — Security-First Document Platform
+# TrustVault — Enterprise Secure Document Management Platform
 
-**Snovasys Hiring Challenge 2026**  
-**Lead Security Software Engineer: Project Implementation**
+TrustVault is an enterprise-grade, Zero-Trust secure document management and access delegation platform. Engineered with a defense-in-depth architectural model, TrustVault guarantees strict data confidentiality, cryptographic integrity, and compliance-ready auditability for sensitive digital assets.
 
----
-
-## 1. Project Overview & Philosophy
-
-**TrustVault** is a document-sharing platform engineered under a strict **Zero-Trust** security architecture. Unlike conventional web applications that prioritize superficial UI screens, TrustVault places unbreachable server-side authorization, immutable audit logging, and immediate access revocation at the core of every architectural decision.
-
-### Key Evaluation Focus Areas:
-* **Security & Authorization (35%):** Live server-side Policy Enforcement Point (PEP) checks on every request. Zero trust in client state or unvalidated JWTs.
-* **Threat Thinking (15%):** Continuous STRIDE threat modeling in [`THREATS.md`](./THREATS.md) and automated isolation test coverage.
-* **Core Functionality (15%):** Complete multi-role document lifecycle with explicit per-document grants.
-* **AI Governance & Auditability (15%):** Comprehensive [`PROMPTS.md`](./PROMPTS.md) documenting AI generation, flaw detection, and engineer-driven remediation.
-* **Engineering Quality (10%):** Robust Express ES Modules structure, centralized error handling, and strict environment configuration.
-* **Documentation & Deployment (10%):** Step-by-step reproducibility and cloud-ready deployment architecture.
-
-### Zero-Tolerance Rules:
-1. **Client-Side Authorization:** Never rely on UI button hiding or unvalidated JWT payloads. Every access request is verified against the database.
-2. **Insecure File Storage:** No files served via `express.static`. Raw storage bucket URLs are strictly hidden behind authenticated streaming proxies.
-3. **Audit Log Tampering:** `UPDATE` and `DELETE` SQL operations on `audit_logs` are blocked by a PostgreSQL engine trigger.
-4. **Immediate Revocation:** Revoking permissions in `document_grants` immediately invalidates subsequent download/view requests without cached token latency.
-5. **Mandatory Documentation:** AI logs (`PROMPTS.md`) and threat registers (`THREATS.md`) maintained throughout development.
+Unlike conventional web systems that rely on perimeter defenses or client-side authorization, TrustVault treats every request as untrusted until verified by a server-side Policy Enforcement Point (PEP), encrypts all documents in memory before disk or cloud persistence, and enforces immutable audit logging directly at the database engine layer.
 
 ---
 
-## 2. Technology Stack
+## Core Architectural Pillars
 
-* **Runtime:** Node.js (>= 18.0.0)
-* **Backend Framework:** Express.js (ES Modules: `import` / `export`)
-* **Database:** PostgreSQL on Supabase Cloud
-* **Database Client:** `@supabase/supabase-js` (Configured with Service Role Key for PEP execution, session persistence disabled)
-* **Security Middleware:** `helmet` (HSTS, CSP, Frameguard, XSS protection), `cors` (origin allowlisting)
-* **Process Management:** `nodemon` (Development), Native Node (Production)
+* **Zero-Trust Policy Enforcement Point (PEP):** Every document access, delegation, download, and deletion request is evaluated in real time against live database authorization rules. Client-side states and unvalidated JWT claims are strictly untrusted.
+* **AES-256-GCM Envelope Encryption at Rest:** Files are encrypted in volatile memory prior to storage using AES-256-GCM with cryptographically random 96-bit initialization vectors (IV) and 128-bit authentication tags. Raw storage buckets never store plaintext data or public URLs.
+* **Multi-Role RBAC & Fine-Grained Access Delegation:** Role-Based Access Control (`ADMIN`, `OWNER`, `VIEWER`) paired with fine-grained per-document delegation allows owners to grant granular view permissions to specific users.
+* **Immediate Access Revocation:** Grant revocation takes effect instantaneously. Database-level policy checks block subsequent access with zero caching delay or token staleness.
+* **Database-Enforced Immutable Audit Trail:** Security logs are recorded with SHA-256 tamper-evident integrity hashes. PostgreSQL PL/pgSQL database triggers intercept and block all `UPDATE` and `DELETE` operations at the engine level.
 
 ---
 
-## 3. Project Directory Structure
+## Security Architecture & Implementation Highlights
+
+### 1. Zero-Trust Access Pipeline
+TrustVault enforces a strict three-gate Policy Enforcement Point (PEP) on every resource request:
+1. **Perimeter Authentication Gate:** Validates the cryptographically signed HMAC-SHA256 Bearer JWT, checking signature validity, user identity existence, and token expiration.
+2. **Role & Tenant Isolation Gate:** Verifies the user's role and scopes database queries so non-administrators can only view resources they own or have explicitly been delegated access to.
+3. **Live Resource Permission Gate:** For document retrieval and decryption, queries the live `document_grants` table to ensure active authorization. If an access grant was revoked a millisecond earlier, access is immediately blocked with HTTP `403 Forbidden`.
+
+### 2. Cryptographic Storage & In-Memory Streaming
+* **In-Memory Encryption:** Uploaded document buffers are ingested strictly into RAM via Multer memory storage (capped at 10MB per file). Files never touch local server disks in unencrypted form.
+* **AES-256-GCM Cipher:** Each file is encrypted with a unique, cryptographically secure 12-byte initialization vector (IV). An authentication tag is calculated to prevent ciphertext tampering.
+* **Authenticated Streaming Proxy:** Document downloads stream encrypted ciphertext directly from private cloud object storage into application memory, decrypt the buffer using the master key and stored IV/tag, and stream plaintext bytes directly to the authorized client with strict `Content-Type` and `Content-Disposition` headers. Raw cloud storage bucket URLs are never exposed.
+
+### 3. Database-Level Audit Immutability
+All security-relevant actions (`USER_LOGIN_SUCCESS`, `DOCUMENT_UPLOADED`, `DOCUMENT_DOWNLOAD_SUCCESS`, `GRANT_CREATED`, `GRANT_REVOKED`, `UNAUTHORIZED_ACCESS_ATTEMPT`) are written to an append-only `audit_logs` table.
+
+Immutability is guaranteed by a PostgreSQL PL/pgSQL trigger function:
+```sql
+CREATE OR REPLACE FUNCTION prevent_audit_log_alteration()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Audit logs are immutable. UPDATE and DELETE operations are forbidden.';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_logs_immutability_trigger
+BEFORE UPDATE OR DELETE ON audit_logs
+FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_alteration();
+```
+Any attempt by an application user, service, or administrative script to mutate or delete audit log records is aborted by the database engine.
+
+### 4. Perimeter Defense & Input Sanitization
+* **Rate Limiting:** Auth endpoints (`/api/auth/login`, `/api/auth/register`) are protected by IP-based rate limiting (10 attempts per 15 minutes) to mitigate credential stuffing and brute-force attacks. Global endpoints enforce a 200 request / 15-minute ceiling.
+* **Recursive Input Sanitization:** Global middleware recursively sanitizes request bodies, query parameters, and route parameters, stripping malicious HTML tags, `<script>` injection vectors, `javascript:` pseudo-protocols, and null bytes (`\0`).
+* **Security Headers:** Hardened HTTP response headers via `helmet` (HSTS, Frameguard, XSS protection, and restrictive Content Security Policy).
+
+---
+
+## Project Directory Structure
 
 ```text
 trustvault/
-├── .env.example              # Environment variables template
-├── .gitignore                 # Secrets, logs, and dependency ignore rules
-├── package.json               # Dependencies and scripts (ES Modules)
-├── vercel.json                # Vercel single-domain routing & build configuration
-├── README.md                  # Project overview and runbook
-├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (Days 1–6)
+├── .env.example              # Environment variable definitions template
+├── .gitignore                 # Version control exclusions (secrets, builds, node_modules)
+├── package.json               # Backend dependencies, scripts, and ES Module config
+├── vercel.json                # Single-domain routing, serverless build & SPA fallback config
+├── README.md                  # Enterprise platform documentation
 ├── THREATS.md                 # STRIDE threat model & attack vector register (TV-01 → TV-15)
-├── client/                    # React 19 + Tailwind v4 + Vite frontend SPA
-│   ├── src/                   # Components, API clients, contexts, pages
-│   └── package.json           # Frontend dependencies
+├── PROMPTS.md                 # Architecture log, vulnerability analysis, and remediation records
+├── client/                    # React 19 + Tailwind CSS + Vite frontend SPA
+│   ├── src/
+│   │   ├── api/               # Unified Axios API clients (auth, documents, grants, audit)
+│   │   ├── components/        # UI components (DocumentVault, GrantModal, AuditLogViewer, etc.)
+│   │   ├── contexts/          # Authentication & session state providers
+│   │   ├── pages/             # Route views (LoginPage, RegisterPage, DashboardPage, AdminPage)
+│   │   ├── App.jsx            # Application shell, navigation, and protected route wiring
+│   │   ├── App.css            # Custom CSS animations and design tokens
+│   │   └── main.jsx           # React DOM root entrypoint
+│   ├── index.html             # Client HTML template
+│   ├── package.json           # Frontend dependencies
+│   └── vite.config.js         # Vite configuration with /api local proxy
 ├── tests/
-│   ├── authUtils.test.js      # Password & JWT cryptographic unit tests (10 tests)
+│   ├── authUtils.test.js      # Password hashing & JWT cryptographic unit tests (10 tests)
 │   ├── middleware.test.js     # PEP authentication & RBAC middleware tests (11 tests)
 │   ├── authRoutes.test.js     # Auth API routes integration tests (12 tests)
-│   ├── cryptoUtils.test.js    # AES-256-GCM crypto utilities unit tests (9 tests)
-│   ├── storageService.test.js # Multer ingestion & storage service tests (6 tests)
+│   ├── cryptoUtils.test.js    # AES-256-GCM encryption & tampering detection unit tests (9 tests)
+│   ├── storageService.test.js # Multer ingestion & private storage service tests (6 tests)
 │   ├── documentRoutes.test.js # Document API PEP access enforcement tests (13 tests)
-│   ├── grantRoutes.test.js    # Grant delegation & immediate revocation PEP tests (14 tests)
+│   ├── grantRoutes.test.js    # Grant delegation & instant revocation PEP tests (14 tests)
 │   ├── auditRoutes.test.js    # Admin audit query, filtering & RBAC tests (11 tests)
 │   └── rateLimiter.test.js    # Rate limiting, health check & sanitization tests (4 tests)
 └── src/
     ├── config/
-    │   ├── env.js             # Validated environment configurations (JWT, AES, Supabase)
-    │   ├── schema.sql         # Supabase PostgreSQL schema DDL with immutability trigger
+    │   ├── env.js             # Environment validation (JWT, AES, Supabase secrets)
+    │   ├── schema.sql         # Supabase PostgreSQL DDL & immutability trigger definition
     │   └── supabase.js        # Headless Supabase client with Service Role authorization
     ├── controllers/
     │   ├── authController.js  # Registration, login, and identity controllers
@@ -74,19 +100,19 @@ trustvault/
     ├── middleware/
     │   ├── auth.js            # PEP Bearer JWT authentication & audit logger
     │   ├── errorHandler.js    # Centralized Express error handler (no stack leaks in prod)
+    │   ├── rateLimiter.js     # Perimeter defense & auth brute-force rate limiters (429)
     │   ├── rbac.js            # Policy Enforcement Point RBAC authorization
     │   ├── upload.js          # In-memory Multer middleware (RAM-only, 10MB limit)
-    │   ├── rateLimiter.js     # Perimeter defense & auth brute-force rate limiters (429)
     │   └── validator.js       # Global recursive HTML/script & null byte input sanitization
     ├── routes/
-    │   ├── authRoutes.js      # Public/protected auth route definitions
+    │   ├── authRoutes.js      # Authentication route definitions
     │   ├── documentRoutes.js  # PEP-protected document route definitions
     │   ├── grantRoutes.js     # Grant delegation and revocation route definitions
     │   └── auditRoutes.js     # Admin-only forensic audit trail route definitions
     ├── services/
-    │   ├── storageService.js  # Private Supabase Storage CRUD (upload/download/delete)
+    │   ├── auditService.js    # Filtered and paginated forensic audit query service
     │   ├── grantService.js    # Document grant delegation, verification, and revocation service
-    │   └── auditService.js    # Filtered and paginated forensic audit query service
+    │   └── storageService.js  # Private Supabase Storage CRUD (upload/download/delete)
     ├── utils/
     │   ├── auditLogger.js     # Synchronous audit log persistence helper
     │   ├── crypto.js          # AES-256-GCM envelope encrypt/decrypt utilities
@@ -97,358 +123,167 @@ trustvault/
 
 ---
 
-## 4. Getting Started & Local Execution
+## Setup & Deployment Runbook
 
-### Prerequisites:
-* **Node.js** (v18.0.0 or higher recommended)
-* **npm** (v9.0.0 or higher)
-* A **Supabase** account and project (for PostgreSQL database access)
+### Prerequisites
+* **Node.js**: v18.0.0 or higher
+* **npm**: v9.0.0 or higher
+* **PostgreSQL / Supabase**: Dedicated Supabase project with Storage Bucket configured
 
 ### Step 1: Install Dependencies
+Install all backend and frontend packages:
 ```bash
+# Install root backend dependencies
 npm install
+
+# Install client frontend dependencies
+cd client && npm install && cd ..
 ```
 
 ### Step 2: Configure Environment Variables
-Copy the `.env.example` file to `.env`:
+Create a `.env` file in the project root based on `.env.example`:
 ```bash
 cp .env.example .env
 ```
-Populate `.env` with your Supabase credentials and desired port:
+
+Set the required environment keys:
 ```env
+# Server Configuration
 PORT=5000
 NODE_ENV=development
-SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJh...your-service-role-key-here
+
+# Database & Storage (Supabase)
+SUPABASE_URL=https://<your-project-id>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJh...<your-service-role-key>
+SUPABASE_STORAGE_BUCKET=vault-documents
+
+# Cryptographic Keys
+JWT_SECRET=super-secure-32-character-secret-key-phrase
+MASTER_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-### Step 3: Initialize Database Schema on Supabase
-1. Navigate to your Supabase project dashboard at [supabase.com](https://supabase.com).
-2. Open the **SQL Editor** from the left navigation panel.
-3. Copy the contents of [`src/config/schema.sql`](./src/config/schema.sql) and paste them into the SQL editor.
-4. Click **Run** to execute the migration. This creates:
-   * `users` table with `user_role` ENUM (`ADMIN`, `OWNER`, `VIEWER`).
-   * `documents` table with owner foreign key.
-   * `document_grants` table with composite unique constraint.
-   * `audit_logs` table with `previous_hash` and `current_hash` integrity columns.
-   * `prevent_audit_log_alteration` PL/pgSQL trigger enforcing immutability.
+> **Note on `MASTER_ENCRYPTION_KEY`:** Must be exactly a 64-character hexadecimal string representing a 256-bit (32-byte) symmetric key. Generate via:
+> ```bash
+> node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+> ```
 
-### Step 4: Run the Application
+### Step 3: Initialize Database Schema
+1. Open your Supabase Project Dashboard and navigate to the **SQL Editor**.
+2. Paste and run the contents of [`src/config/schema.sql`](./src/config/schema.sql).
+3. The script will create:
+   * Tables: `users`, `documents`, `document_grants`, `audit_logs`
+   * Role enum: `user_role` (`ADMIN`, `OWNER`, `VIEWER`)
+   * Permission enum: `grant_permission` (`READ`, `EDIT`)
+   * Database triggers: `prevent_audit_log_alteration` (enforcing audit immutability)
+4. Ensure the private bucket named `vault-documents` exists under Supabase **Storage** (Public access disabled).
 
-#### Development Mode (with automatic reload via nodemon):
+### Step 4: Run the Application Locally
+
+#### Backend Development Server (Port 5000)
 ```bash
 npm run dev
 ```
 
-#### Production Mode:
+#### Frontend Development Server (Port 5173)
+```bash
+cd client
+npm run dev
+```
+The React frontend dev server automatically proxies `/api` calls to `http://localhost:5000`.
+
+#### Production Mode
 ```bash
 npm start
 ```
 
 ---
 
-## 5. API Verification & Healthcheck
+## Production Deployment on Vercel
 
-Once the server is running, verify the health status by sending a `GET` request:
+TrustVault is pre-configured for single-domain deployment on Vercel via [`vercel.json`](./vercel.json).
 
-```bash
-curl http://localhost:5000/api/health
-```
+### 1. Unified Single-Domain Routing
+* **Serverless Backend:** `src/server.js` is bundled via `@vercel/node`.
+* **Frontend SPA:** `client/` is compiled via `@vercel/vite`.
+* **Routing Rules:**
+  * `/api/(.*)` &rarr; Routed directly to the Express serverless function (`src/server.js`).
+  * `/health` &rarr; Routed directly to `src/server.js` (public liveness probe).
+  * `/(.*)` &rarr; Routed to the client single-page application with HTML5 pushState fallback (`/client/index.html`).
 
-### Expected Response:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-10-19T12:00:00.000Z",
-  "environment": "development",
-  "database": {
-    "status": "connected"
-  },
-  "uptimeSeconds": 12
-}
-```
-
----
-
-## 6. Authentication API Endpoints
-
-### 1. Register User
-* **Endpoint:** `POST /api/auth/register`
-* **Access:** Public
-* **Request Body:**
-  ```json
-  {
-    "email": "engineer@trustvault.local",
-    "password": "Password123!Secure",
-    "full_name": "Lead Security Engineer",
-    "role": "OWNER"
-  }
-  ```
-  *(Roles permitted: `ADMIN`, `OWNER`, `VIEWER`. Defaults to `VIEWER`.)*
-* **Response (`201 Created`):**
-  ```json
-  {
-    "message": "User registered successfully.",
-    "user": {
-      "id": "e6a2bc34-45a7-4c12-98ab-8c9012345678",
-      "email": "engineer@trustvault.local",
-      "full_name": "Lead Security Engineer",
-      "role": "OWNER",
-      "created_at": "2026-10-20T12:00:00.000Z"
-    }
-  }
-  ```
-
-### 2. User Login
-* **Endpoint:** `POST /api/auth/login`
-* **Access:** Public
-* **Request Body:**
-  ```json
-  {
-    "email": "engineer@trustvault.local",
-    "password": "Password123!Secure"
-  }
-  ```
-* **Response (`200 OK`):**
-  ```json
-  {
-    "message": "Login successful.",
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "user": {
-      "id": "e6a2bc34-45a7-4c12-98ab-8c9012345678",
-      "email": "engineer@trustvault.local",
-      "full_name": "Lead Security Engineer",
-      "role": "OWNER"
-    }
-  }
-  ```
-
-### 3. Identity Verification (`Me`)
-* **Endpoint:** `GET /api/auth/me`
-* **Access:** Protected (Bearer JWT in `Authorization` header)
-* **Headers:** `Authorization: Bearer <token>`
-* **Response (`200 OK`):**
-  ```json
-  {
-    "user": {
-      "id": "e6a2bc34-45a7-4c12-98ab-8c9012345678",
-      "email": "engineer@trustvault.local",
-      "role": "OWNER"
-    }
-  }
-  ```
+### 2. Vercel Environment Variables
+Add the following keys in your **Vercel Project Settings &rarr; Environment Variables**:
+* `SUPABASE_URL`
+* `SUPABASE_SERVICE_ROLE_KEY`
+* `SUPABASE_STORAGE_BUCKET`
+* `JWT_SECRET`
+* `MASTER_ENCRYPTION_KEY`
+* `NODE_ENV=production`
 
 ---
 
-## 7. Document API Endpoints (Day 3)
+## Automated Testing Suite
 
-All document endpoints require `Authorization: Bearer <token>` header.
-
-### 1. Upload Document (Encrypted)
-* **Endpoint:** `POST /api/documents/upload`
-* **Access:** Any authenticated role
-* **Body:** `multipart/form-data` with field `document` (file), `title` (string), `category` (string)
-* **Security:** File encrypted in-memory with AES-256-GCM before storage. Ciphertext uploaded to private bucket.
-* **Response (`201 Created`):**
-  ```json
-  {
-    "message": "Document uploaded and encrypted successfully.",
-    "document": { "id": "...", "title": "...", "category": "...", "file_size": 1024, "owner_id": "..." }
-  }
-  ```
-
-### 2. List Documents (Tenant-Isolated)
-* **Endpoint:** `GET /api/documents`
-* **Access:** Any authenticated role
-* **Security:** Non-ADMIN users see only documents they own or have an active grant for. Server constructs all filters — no client-supplied query params trusted.
-* **Response (`200 OK`):**
-  ```json
-  { "documents": [ { "id": "...", "title": "...", "category": "...", "owner_id": "..." } ] }
-  ```
-
-### 3. Download Document (PEP-Authorized Streaming)
-* **Endpoint:** `GET /api/documents/:id/download`
-* **Access:** Document owner, ADMIN, or user with active `document_grants` row
-* **Security:** Three-gate live DB authorization check per request. Decrypted in-memory. Never exposes raw storage URLs.
-* **Response (`200 OK`):** Binary file buffer with appropriate `Content-Type` and `Content-Disposition` headers.
-* **Denied Response (`403 Forbidden`):**
-  ```json
-  { "error": "Access denied: Insufficient document permissions." }
-  ```
-
-### 4. Delete Document
-* **Endpoint:** `DELETE /api/documents/:id`
-* **Access:** Document owner or ADMIN only
-* **Security:** PEP check enforced. Deletes blob from storage, removes DB record (cascades grants), logs `DOCUMENT_DELETED` to audit trail.
-* **Response (`200 OK`):**
-  ```json
-  { "message": "Document deleted successfully.", "id": "..." }
-  ```
-
----
-
-## 8. Grant Delegation & Audit API Endpoints (Day 4)
-
-All grant and audit endpoints require `Authorization: Bearer <token>` header.
-
-### 1. Create Document Access Grant
-* **Endpoint:** `POST /api/grants`
-* **Access:** Document owner or ADMIN
-* **Request Body:**
-  ```json
-  {
-    "documentId": "4c3b8e12-3456-4abc-8def-123456789abc",
-    "granteeEmail": "viewer@trustvault.local"
-  }
-  ```
-* **Security:** Enforces owner/admin authorization gate, prevents self-granting (`400 Bad Request`), checks user existence (`404`), blocks duplicate grants (`409 Conflict`), and logs `GRANT_CREATED` to audit trail.
-* **Response (`201 Created`):**
-  ```json
-  {
-    "message": "Access grant created successfully.",
-    "grant": {
-      "id": "7d2e1a34-bc56-4789-9012-abcdef123456",
-      "document_id": "4c3b8e12-3456-4abc-8def-123456789abc",
-      "grantee_id": "8f3a2b1c-4d5e-4678-8901-abcdef987654",
-      "granted_to": "viewer@trustvault.local",
-      "permission": "READ"
-    }
-  }
-  ```
-
-### 2. Revoke Document Access Grant (Immediate Invalidation)
-* **Endpoint:** `DELETE /api/grants/:id`
-* **Access:** Document owner, grant creator, or ADMIN
-* **Security:** Deletes grant row from `document_grants`, immediately terminating download rights at the live PEP gate with zero caching latency. Logs `GRANT_REVOKED` to audit trail.
-* **Response (`200 OK`):**
-  ```json
-  { "message": "Grant revoked successfully.", "grantId": "7d2e1a34-bc56-4789-9012-abcdef123456" }
-  ```
-
-### 3. List Document Access Grants
-* **Endpoint:** `GET /api/grants/document/:documentId`
-* **Access:** Document owner or ADMIN only
-* **Response (`200 OK`):**
-  ```json
-  {
-    "grants": [
-      {
-        "id": "7d2e1a34-bc56-4789-9012-abcdef123456",
-        "document_id": "4c3b8e12-3456-4abc-8def-123456789abc",
-        "grantee_id": "8f3a2b1c-4d5e-4678-8901-abcdef987654",
-        "grantee_email": "viewer@trustvault.local",
-        "permission": "READ"
-      }
-    ]
-  }
-  ```
-
-### 4. Query Security Audit Logs
-* **Endpoint:** `GET /api/audit-logs`
-* **Access:** ADMIN role only (Double-layered PEP enforcement)
-* **Query Parameters:** `page` (default 1), `limit` (default 50, max 100), `action`, `actorId` (UUID), `documentId` (UUID), `startDate` (ISO 8601), `endDate` (ISO 8601)
-* **Security:** Clamps limit to prevent DoS, sanitizes UUID and date parameters, queries against indexed `timestamp` column.
-* **Response (`200 OK`):**
-  ```json
-  {
-    "data": [
-      {
-        "id": "e7b8a1c2-3d4e-4f5a-8b9c-0123456789ab",
-        "timestamp": "2026-10-22T08:00:00.000Z",
-        "created_at": "2026-10-22T08:00:00.000Z",
-        "actor_id": "8f3a2b1c-4d5e-4678-8901-abcdef987654",
-        "action": "GRANT_CREATED",
-        "document_id": "4c3b8e12-3456-4abc-8def-123456789abc",
-        "details": { "granteeEmail": "viewer@trustvault.local", "status": "SUCCESS" }
-      }
-    ],
-    "count": 185,
-    "page": 1,
-    "totalPages": 4
-  }
-  ```
-
----
-
-## 9. Health & Perimeter Defense Endpoints (Day 5)
-
-### 1. Public Health Probe
-* **Endpoint:** `GET /health`
-* **Access:** Public (no authentication required)
-* **Response (`200 OK`):**
-  ```json
-  {
-    "status": "healthy",
-    "timestamp": "2026-10-23T04:20:00.000Z",
-    "uptime": 45.67
-  }
-  ```
-
-### 2. Rate Limiting Protection
-* **Auth Rate Limiting:** Applied to `/api/auth/login` and `/api/auth/register`. Caps traffic to **10 requests per 15 minutes** per IP. Exceeding attempts triggers HTTP `429 Too Many Requests`.
-* **Global Rate Limiting:** Applied to all `/api/*` endpoints. Caps traffic to **200 requests per 15 minutes** per IP.
-* **Input Sanitization:** Automatically strips script injection tags (`<script>`), null bytes (`\0`), HTML tags, and `javascript:` pseudo-protocols across all request bodies, query strings, and URL parameters.
-
----
-
-## 10. Running the Test Suite
+TrustVault includes a comprehensive automated test harness covering cryptographic security, PEP enforcement, tenant isolation, and audit log validation.
 
 ```bash
 npm test
 ```
 
-**Total: 90 automated tests across 9 suites (100% passing):**
-| Suite | Tests | Coverage |
-|---|---|---|
-| `authUtils.test.js` | 10 | bcrypt hashing, JWT sign/verify, token error codes |
-| `middleware.test.js` | 11 | PEP auth middleware, RBAC enforcement, audit log writes |
-| `authRoutes.test.js` | 12 | Register/Login/Me endpoints, input validation, error responses |
-| `cryptoUtils.test.js` | 9 | AES-256-GCM encrypt/decrypt, IV uniqueness, auth tag tampering |
-| `storageService.test.js` | 6 | Multer 10MB limit, RAM-only buffer, storage CRUD operations |
-| `documentRoutes.test.js` | 13 | BOLA prevention, tenant isolation, upload/download/delete PEP |
-| `grantRoutes.test.js` | 14 | Grant delegation, instant revocation PEP check, non-owner blocking, self-grant rejection |
-| `auditRoutes.test.js` | 11 | Admin-only RBAC, limit clamping, action/actor/date filtering, malformed parameter handling |
-| `rateLimiter.test.js` | 4 | Public /health probe, input sanitization, 429 rate limit enforcement |
+### Test Coverage Summary (90 Tests Across 9 Suites — 100% Passing):
+| Test Suite | Tests | Validation Scope |
+|---|:---:|---|
+| `authUtils.test.js` | 10 | bcrypt salt rounds, constant-time verification, JWT signing, signature tampering rejection |
+| `middleware.test.js` | 11 | PEP Bearer token extraction, invalid token denial, RBAC policy enforcement, audit log generation |
+| `authRoutes.test.js` | 12 | User registration, login verification, current identity query, duplicate account protection |
+| `cryptoUtils.test.js` | 9 | AES-256-GCM encryption/decryption, 96-bit IV uniqueness, auth tag tampering detection |
+| `storageService.test.js` | 6 | Multer 10MB file limit enforcement, volatile RAM buffer handling, private storage CRUD |
+| `documentRoutes.test.js` | 13 | BOLA prevention, tenant isolation, PEP-protected encrypted upload, streaming download, delete |
+| `grantRoutes.test.js` | 14 | Access delegation, live revocation enforcement, self-granting rejection, unauthorized grant access |
+| `auditRoutes.test.js` | 11 | Admin-only RBAC, limit clamping (max 100), action/actor/date filtering, malformed input handling |
+| `rateLimiter.test.js` | 4 | Public `/health` liveness probe, recursive HTML/script sanitization, 429 rate limit enforcement |
 
 ---
 
-## 11. Vercel Single-Domain Deployment Configuration (Day 6)
+## REST API Reference
 
-TrustVault is configured for zero-friction single-domain deployment on Vercel:
+All protected endpoints require an `Authorization: Bearer <token>` header.
 
-### 1. Root `vercel.json` Routing
-* **Serverless Backend:** `src/server.js` is bundled via `@vercel/node`.
-* **Frontend SPA:** `client/package.json` is compiled with `@vercel/vite`.
-* **Path Routing Rules:**
-  * `/api/(.*)` $\to$ routed directly to `src/server.js` (Express REST API).
-  * `/health` $\to$ routed directly to `src/server.js` (Public liveness probe).
-  * `/(.*)` $\to$ routed to static frontend assets (`/client/$1`) with client-side SPA fallback.
+### 1. System Health
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/health` | Public | System liveness probe returning uptime, timestamp, and health status |
 
-### 2. Serverless Execution Handling
-In `src/server.js`, `app.listen()` is executed conditionally:
-```javascript
-if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
-  app.listen(PORT, ...);
-}
-export default app;
-```
-This guarantees smooth serverless invocation under Vercel's lifecycle without hung ports or cold-start timeouts.
+### 2. Authentication API (`/api/auth`)
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/register` | Public | Register new user identity (`ADMIN`, `OWNER`, `VIEWER`). Returns sanitized user object |
+| `POST` | `/api/auth/login` | Public | Authenticate credentials. Returns signed HMAC-SHA256 JWT and user profile |
+| `GET` | `/api/auth/me` | Protected | Returns authenticated user profile resolved from verified Bearer token |
 
-### 3. Unified Frontend API Client
-The React 19 frontend API client (`client/src/api/client.js`) defaults to relative `/api` when `VITE_API_BASE_URL` is omitted. Under local development, Vite's dev server proxies `/api` to `http://localhost:5000`; on Vercel, requests route natively to the Express serverless function on the same origin.
+### 3. Document Management API (`/api/documents`)
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `POST` | `/api/documents/upload` | Protected | Multipart upload (`document` file, `title`, `category`). Encrypted in RAM before storage |
+| `GET` | `/api/documents` | Protected | List documents. Enforces tenant isolation (owners see own; delegates see granted; admins see all) |
+| `GET` | `/api/documents/:id/download` | Protected | Live PEP-authorized download. Ciphertext decrypted in memory and streamed directly |
+| `DELETE` | `/api/documents/:id` | Protected | Delete document. Restricted to document owner or system administrator |
+| `GET` | `/api/documents/:id/permissions` | Protected | List active access grants for a document with grantee and granter identities |
 
-### 4. Required Vercel Environment Variables
-Set the following in the **Vercel Project Settings $\to$ Environment Variables**:
-* `SUPABASE_URL`: Supabase project URL (`https://<project-ref>.supabase.co`)
-* `SUPABASE_SERVICE_ROLE_KEY`: Secret service role key for database PEP bypass & storage management
-* `JWT_SECRET`: Minimum 32-character secret key for HMAC-SHA256 tokens
-* `MASTER_ENCRYPTION_KEY`: 64-character hexadecimal string representing 32-byte AES-256 key
-* `SUPABASE_STORAGE_BUCKET`: `vault-documents`
-* `NODE_ENV`: `production`
+### 4. Access Delegation API (`/api/grants`)
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `POST` | `/api/grants` | Protected | Grant access permission (`READ`, `EDIT`) to a grantee by email. Self-granting blocked |
+| `GET` | `/api/grants/document/:documentId` | Protected | Retrieve all active delegation grants for a specific document (Owner / Admin only) |
+| `DELETE` | `/api/grants/:id` | Protected | Immediately revoke access grant. Revocation takes effect with zero caching latency |
+
+### 5. Forensic Audit Trail API (`/api/audit-logs`)
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/api/audit-logs` | Admin Only | Query immutable security audit logs with pagination and filters (`action`, `actorId`, `date`) |
 
 ---
 
-## 12. Security Documentation
+## Security Governance & Compliance Documentation
 
-* [`PROMPTS.md`](./PROMPTS.md): AI interaction audit log across Days 1–6, documenting AI-generated security flaws, design decisions, and corrective human engineering.
-* [`THREATS.md`](./THREATS.md): STRIDE + OWASP API 2023 threat register — 15 threat vectors (TV-01 to TV-15) covering audit immutability, BOLA, path traversal, JWT forgery, credential stuffing, AES-GCM misuse, malicious file uploads, delegation BOLA, self-granting, audit log DoS, brute-force rate limiting, and input sanitization.
+* **STRIDE Threat Modeling ([`THREATS.md`](./THREATS.md)):** Comprehensive threat register detailing 15 attack vectors (TV-01 through TV-15) covering BOLA, audit immutability, cryptographic misuse, rate limiting, and input sanitization alongside technical mitigations and automated test references.
+* **Architecture & Governance Log ([`PROMPTS.md`](./PROMPTS.md)):** Engineering audit log recording architectural decisions, vulnerability remediations, and design evolution across the platform lifecycle.

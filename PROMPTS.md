@@ -137,4 +137,22 @@ Complete the zero-trust Document Vault frontend interface, interactive RAM dropz
 * **Cross-Role Action Exposure:** Prevented unprivileged users (`VIEWER`) from accessing grant delegation or document deletion controls by enforcing caller ownership (`doc.owner_id === user.id`) and admin role gates before rendering management triggers.
 * **Client-Side File Size Bypass:** Enforced strict 10MB file size checks directly within the drag-and-drop ingestion handler before any FormData serialization or upload attempt, saving server bandwidth and preventing 413 payload rejections.
 
+---
+
+## Day 6 - Phase 6.1: Vercel Single-Domain Deployment Configuration
+
+### 1. Objective
+Configure seamless single-domain deployment for TrustVault on Vercel, routing serverless Express API endpoints (`/api/(.*)`, `/health`) and static React 19 SPA assets under a unified domain without CORS overhead or multiple hostnames.
+
+### 2. Key Architectural Decisions
+* **Single-Domain Monorepo Routing (`vercel.json`):** Orchestrated builds with `@vercel/node` for `src/server.js` and `@vercel/vite` for `client/package.json`. Configured path routing directing `/api/(.*)` and `/health` to the Express backend while routing `/(.*)` to the static frontend SPA (`/client/$1`).
+* **Serverless Lifecycle Decoupling (`src/server.js`):** Conditioned `app.listen()` execution with `!process.env.VERCEL`, ensuring the Express application instance is cleanly exported for Vercel's serverless runtime without binding local TCP ports or triggering execution timeouts.
+* **Unified API Client Base URL (`client/src/api/client.js`):** Defaulted the frontend API client `BASE_URL` to relative `/api` when `VITE_API_BASE_URL` is omitted. Configured Vite development server proxy in `client/vite.config.js` to route `/api` to `http://localhost:5000` locally, achieving identical network topology between local development and production.
+
+### 3. Security Flaws Caught & Mitigated
+* **Cross-Origin Hostname Leakage:** Deploying backend APIs and frontend SPAs across separate origins (e.g. `api.domain.com` vs `app.domain.com`) expands the attack surface, exposes CORS preflight overhead, and complicates cookie/token security policies. Consolidated under a single domain via `vercel.json` routing.
+* **Cold-Start Serverless Port Binding Deadlock:** Calling `app.listen()` inside serverless functions causes port-binding conflicts or hanging lambdas that exhaust execution time limits. Prevented by checking `!process.env.VERCEL` before starting the HTTP listener.
+* **Hardcoded Localhost API Fallbacks in Production:** Standard boilerplate defaults API URLs to `http://localhost:5000`, which silently fails when deployed. Fixed by falling back to relative `/api` paths with local Vite dev proxying.
+
+
 

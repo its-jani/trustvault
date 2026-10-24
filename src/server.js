@@ -151,8 +151,8 @@ app.use(notFoundHandler);
 // 8. Centralized Error Handler
 app.use(errorHandler);
 
-// Server Execution
-if (process.env.NODE_ENV !== 'test') {
+// Server Execution (skip in test or Vercel serverless environment)
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
   const server = app.listen(PORT, () => {
     console.log(`[TrustVault] Server running in ${NODE_ENV} mode on port ${PORT}`);
     console.log(`[TrustVault] Healthcheck available at http://localhost:${PORT}/api/health`);

@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 /**
  * Universal API Client with automatic Bearer Token injection and 401 redirection.

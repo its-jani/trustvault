@@ -44,9 +44,13 @@ trustvault/
 ├── .env.example              # Environment variables template
 ├── .gitignore                 # Secrets, logs, and dependency ignore rules
 ├── package.json               # Dependencies and scripts (ES Modules)
+├── vercel.json                # Vercel single-domain routing & build configuration
 ├── README.md                  # Project overview and runbook
-├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (Days 1–5)
+├── PROMPTS.md                 # AI prompt log, vulnerability analysis, and fixes (Days 1–6)
 ├── THREATS.md                 # STRIDE threat model & attack vector register (TV-01 → TV-15)
+├── client/                    # React 19 + Tailwind v4 + Vite frontend SPA
+│   ├── src/                   # Components, API clients, contexts, pages
+│   └── package.json           # Frontend dependencies
 ├── tests/
 │   ├── authUtils.test.js      # Password & JWT cryptographic unit tests (10 tests)
 │   ├── middleware.test.js     # PEP authentication & RBAC middleware tests (11 tests)
@@ -408,7 +412,43 @@ npm test
 
 ---
 
-## 11. Security Documentation
+## 11. Vercel Single-Domain Deployment Configuration (Day 6)
 
-* [`PROMPTS.md`](./PROMPTS.md): AI interaction audit log across Days 1–5, documenting AI-generated security flaws and corrective human engineering.
+TrustVault is configured for zero-friction single-domain deployment on Vercel:
+
+### 1. Root `vercel.json` Routing
+* **Serverless Backend:** `src/server.js` is bundled via `@vercel/node`.
+* **Frontend SPA:** `client/package.json` is compiled with `@vercel/vite`.
+* **Path Routing Rules:**
+  * `/api/(.*)` $\to$ routed directly to `src/server.js` (Express REST API).
+  * `/health` $\to$ routed directly to `src/server.js` (Public liveness probe).
+  * `/(.*)` $\to$ routed to static frontend assets (`/client/$1`) with client-side SPA fallback.
+
+### 2. Serverless Execution Handling
+In `src/server.js`, `app.listen()` is executed conditionally:
+```javascript
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
+  app.listen(PORT, ...);
+}
+export default app;
+```
+This guarantees smooth serverless invocation under Vercel's lifecycle without hung ports or cold-start timeouts.
+
+### 3. Unified Frontend API Client
+The React 19 frontend API client (`client/src/api/client.js`) defaults to relative `/api` when `VITE_API_BASE_URL` is omitted. Under local development, Vite's dev server proxies `/api` to `http://localhost:5000`; on Vercel, requests route natively to the Express serverless function on the same origin.
+
+### 4. Required Vercel Environment Variables
+Set the following in the **Vercel Project Settings $\to$ Environment Variables**:
+* `SUPABASE_URL`: Supabase project URL (`https://<project-ref>.supabase.co`)
+* `SUPABASE_SERVICE_ROLE_KEY`: Secret service role key for database PEP bypass & storage management
+* `JWT_SECRET`: Minimum 32-character secret key for HMAC-SHA256 tokens
+* `MASTER_ENCRYPTION_KEY`: 64-character hexadecimal string representing 32-byte AES-256 key
+* `SUPABASE_STORAGE_BUCKET`: `vault-documents`
+* `NODE_ENV`: `production`
+
+---
+
+## 12. Security Documentation
+
+* [`PROMPTS.md`](./PROMPTS.md): AI interaction audit log across Days 1–6, documenting AI-generated security flaws, design decisions, and corrective human engineering.
 * [`THREATS.md`](./THREATS.md): STRIDE + OWASP API 2023 threat register — 15 threat vectors (TV-01 to TV-15) covering audit immutability, BOLA, path traversal, JWT forgery, credential stuffing, AES-GCM misuse, malicious file uploads, delegation BOLA, self-granting, audit log DoS, brute-force rate limiting, and input sanitization.

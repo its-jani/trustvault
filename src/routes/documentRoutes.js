@@ -5,7 +5,8 @@ import {
   uploadDocument,
   downloadDocument,
   listDocuments,
-  deleteDocument
+  deleteDocument,
+  getDocumentPermissions
 } from '../controllers/documentController.js';
 
 const router = Router();
@@ -26,6 +27,13 @@ router.post('/upload', uploadSingleDocument, uploadDocument);
  * @access  Protected
  */
 router.get('/', listDocuments);
+
+/**
+ * @route   GET /api/documents/:id/permissions
+ * @desc    List active delegate access permissions/grants with grantee and granter metadata
+ * @access  Protected (Owner or ADMIN)
+ */
+router.get('/:id/permissions', getDocumentPermissions);
 
 /**
  * @route   GET /api/documents/:id/download

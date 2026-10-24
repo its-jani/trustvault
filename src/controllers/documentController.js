@@ -6,6 +6,7 @@ import {
   deleteDocumentFromStorage
 } from '../services/storageService.js';
 import { logAuditEvent } from '../utils/auditLogger.js';
+import { listDocumentGrants } from '../services/grantService.js';
 
 /**
  * Extracts pure storage path, IV, and auth tag from storage_path composite string.
@@ -341,9 +342,35 @@ export async function deleteDocument(req, res, next) {
   }
 }
 
+/**
+ * Lists active permissions/grants for a document with grantee and granter metadata.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+export async function getDocumentPermissions(req, res, next) {
+  try {
+    const documentId = req.params.id;
+    const requestingUserId = req.user.id;
+    const requestingUserRole = req.user.role;
+
+    const grants = await listDocumentGrants(documentId, requestingUserId, requestingUserRole);
+
+    return res.status(200).json({
+      success: true,
+      permissions: grants,
+      grants
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export default {
   uploadDocument,
   downloadDocument,
   listDocuments,
-  deleteDocument
+  deleteDocument,
+  getDocumentPermissions
 };

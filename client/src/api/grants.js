@@ -7,13 +7,16 @@ import apiClient from './client';
  * @returns {Promise<Array>} List of grant objects
  */
 export async function fetchDocumentGrants(documentId) {
-  const response = await apiClient(`/grants/document/${documentId}`);
+  let response = await apiClient(`/documents/${documentId}/permissions`);
+  if (!response.ok) {
+    response = await apiClient(`/grants/document/${documentId}`);
+  }
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.error || errorData.message || 'Failed to fetch document grants.');
   }
   const data = await response.json();
-  return data.grants || [];
+  return data.permissions || data.grants || [];
 }
 
 /**

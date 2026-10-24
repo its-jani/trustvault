@@ -182,8 +182,25 @@ export function GrantModal({ isOpen, onClose, document: doc }) {
           ) : (
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
               {grants.map((grant) => {
-                const granteeDisplay =
-                  grant.grantee?.email || grant.grantee?.full_name || grant.grantee_id;
+                const granteeName = grant.grantee_name || grant.grantee?.full_name;
+                const granteeEmail = grant.grantee_email || grant.grantee?.email;
+                const granteeId = grant.user_id || grant.grantee_id;
+                const granteeDisplay = granteeName && granteeEmail
+                  ? `${granteeName} (${granteeEmail})`
+                  : granteeEmail || granteeName || granteeId || 'Unknown Grantee';
+
+                const granterName = grant.granter_name || grant.granter?.full_name;
+                const granterEmail = grant.granter_email || grant.granter?.email;
+                const granterId = grant.granted_by;
+                const granterDisplay = granterName && granterEmail
+                  ? `${granterName} (${granterEmail})`
+                  : granterEmail || granterName || (granterId ? `User ${granterId.slice(0, 8)}...` : 'Document Owner');
+
+                const formattedDate = grant.created_at || grant.granted_at
+                  ? new Date(grant.created_at || grant.granted_at).toLocaleDateString()
+                  : 'Active';
+
+                const truncatedGranteeId = granteeId ? `${granteeId.slice(0, 8)}...` : null;
                 const isRevoking = revokingId === grant.id;
 
                 return (
@@ -191,19 +208,28 @@ export function GrantModal({ isOpen, onClose, document: doc }) {
                     key={grant.id}
                     className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/80 flex items-center justify-between gap-3 hover:border-slate-700/80 transition-colors"
                   >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-slate-200 truncate">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-slate-200">
                           {granteeDisplay}
                         </span>
-                        <Badge variant="outline" className="text-[10px] py-0">
+                        {truncatedGranteeId && (
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-[9px] px-1.5 py-0 text-slate-400 bg-slate-900 border-slate-700/60"
+                            title={`Grantee UUID: ${granteeId}`}
+                          >
+                            {truncatedGranteeId}
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="text-[10px] py-0 text-emerald-400 border-emerald-800/40 bg-emerald-950/30">
                           {grant.permission || 'READ'}
                         </Badge>
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5">
-                        <Clock className="w-3 h-3" />
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
+                        <Clock className="w-3 h-3 text-slate-500 shrink-0" />
                         <span>
-                          Granted on {grant.created_at ? new Date(grant.created_at).toLocaleDateString() : 'Active'}
+                          Granted by <span className="text-slate-300 font-medium">{granterDisplay}</span> on {formattedDate}
                         </span>
                       </div>
                     </div>
@@ -215,7 +241,7 @@ export function GrantModal({ isOpen, onClose, document: doc }) {
                       onClick={() => handleRevokeGrant(grant.id, granteeDisplay)}
                       disabled={isRevoking}
                       isLoading={isRevoking}
-                      className="h-8 px-2.5 text-xs gap-1"
+                      className="h-8 px-2.5 text-xs gap-1 shrink-0"
                       title="Revoke access immediately"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

@@ -246,28 +246,49 @@ export async function listDocumentGrants(documentId, requestingUserId, requestin
   if (grantsError) throw grantsError;
   if (!grants || grants.length === 0) return [];
 
-  // 3. Join Grantee User Metadata (email, name)
-  const granteeIds = grants.map((g) => g.grantee_id);
-  const { data: users, error: usersError } = await supabase
-    .from('users')
-    .select('id, email, full_name')
-    .in('id', granteeIds);
+  // 3. Join Grantee & Granter User Metadata (email, full_name, id)
+  const userIdsToFetch = Array.from(
+    new Set([
+      ...grants.map((g) => g.grantee_id).filter(Boolean),
+      ...grants.map((g) => g.granted_by).filter(Boolean)
+    ])
+  );
 
-  if (usersError) throw usersError;
+  let userMap = {};
+  if (userIdsToFetch.length > 0) {
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id, email, full_name')
+      .in('id', userIdsToFetch);
 
-  const userMap = (users || []).reduce((acc, u) => {
-    acc[u.id] = u;
-    return acc;
-  }, {});
+    if (usersError) throw usersError;
 
-  return grants.map((g) => ({
-    id: g.id,
-    document_id: g.document_id,
-    grantee_id: g.grantee_id,
-    grantee_email: userMap[g.grantee_id]?.email || null,
-    grantee_name: userMap[g.grantee_id]?.full_name || null,
-    granted_by: g.granted_by,
-    permission: g.permission,
-    created_at: g.created_at
-  }));
+    userMap = (users || []).reduce((acc, u) => {
+      acc[u.id] = u;
+      return acc;
+    }, {});
+  }
+
+  return grants.map((g) => {
+    const grantee = userMap[g.grantee_id];
+    const granter = userMap[g.granted_by];
+
+    return {
+      id: g.id,
+      document_id: g.document_id,
+      user_id: g.grantee_id,
+      grantee_id: g.grantee_id,
+      grantee_name: grantee?.full_name || null,
+      grantee_email: grantee?.email || null,
+      granted_by: g.granted_by,
+      granter_name: granter?.full_name || null,
+      granter_email: granter?.email || null,
+      permission: g.permission,
+      created_at: g.created_at,
+      granted_at: g.created_at,
+      // Nested objects for backwards compatibility
+      grantee: grantee ? { id: grantee.id, email: grantee.email, full_name: grantee.full_name } : null,
+      granter: granter ? { id: granter.id, email: granter.email, full_name: granter.full_name } : null
+    };
+  });
 }

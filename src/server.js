@@ -3,7 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import supabase from './config/supabase.js';
-import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { errorHandler, notFoundHandler, AppError } from './middleware/errorHandler.js';
 import authRoutes from './routes/authRoutes.js';
 import documentRoutes from './routes/documentRoutes.js';
 import grantRoutes from './routes/grantRoutes.js';
@@ -46,17 +46,33 @@ app.use(
 
 // 2. CORS Configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : ['http://localhost:3000', 'http://localhost:5173'];
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, curl, server-to-server)
-      if (!origin || allowedOrigins.includes(origin) || NODE_ENV === 'development') {
+      if (!origin || NODE_ENV === 'development') {
         return callback(null, true);
       }
-      return callback(new Error('CORS request blocked by TrustVault security policy.'));
+
+      try {
+        const hostname = new URL(origin).hostname;
+        if (
+          allowedOrigins.includes(origin) ||
+          hostname.endsWith('.vercel.app') ||
+          (process.env.VERCEL_URL && hostname === new URL(`https://${process.env.VERCEL_URL}`).hostname)
+        ) {
+          return callback(null, true);
+        }
+      } catch {
+        if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+          return callback(null, true);
+        }
+      }
+
+      return callback(new AppError('CORS request blocked by TrustVault security policy.', 403));
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
